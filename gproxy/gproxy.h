@@ -63,8 +63,8 @@ extern uint32_t War3Version;
 // output
 
 void LOG_Print( string message );
-void CONSOLE_Print( string message, bool log = true );
-void CONSOLE_PrintNoCRLF( string message, bool log = true );
+void CONSOLE_Print( string message, int color = 0, bool log = true );
+void CONSOLE_PrintNoCRLF( string message, int color = 0, bool log = true );
 void CONSOLE_ChangeChannel( string channel );
 void CONSOLE_AddChannelUser( string name );
 void CONSOLE_RemoveChannelUser( string name );
@@ -145,7 +145,6 @@ public:
 	bool m_Console;
 	bool m_UDPConsole;
 	string m_UDPPassword;
-	string m_UDPTrigger;
 	bool m_Quit;
 	bool m_PublicGames;
 	bool m_FilterGProxy;

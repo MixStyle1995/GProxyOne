@@ -34,13 +34,45 @@
 #include <winsock.h>
 #include <process.h>
 #include <time.h>
+#include <unordered_set>
+#include <unordered_map>
+#include <fcntl.h>
+#include <io.h>
 
 #include "curses.h"
 
 #include "CMDNSScanner.h"
 
+struct ColoredSegment
+{
+	wstring text;
+	int color_pair;
+};
+
+struct ColoredLine 
+{
+	vector<ColoredSegment> segments;
+};
+
+#define dye_black			0
+#define dye_blue			1
+#define dye_green			2
+#define dye_aqua			3
+#define dye_red				4
+#define dye_purple			5
+#define dye_yellow			6
+#define dye_white			7
+#define dye_grey			8
+#define dye_light_blue		9
+#define dye_light_green		10
+#define dye_light_aqua		11
+#define dye_light_red		12
+#define dye_light_purple	13
+#define dye_light_yellow	14
+#define dye_bright_white	15
+
 bool gCurses = false;
-vector<string> gMainBuffer;
+vector<ColoredLine> gMainBuffer;
 string gInputBuffer;
 string gChannelName;
 vector<string> gChannelUsers;
@@ -90,60 +122,62 @@ void LOG_Print( string message )
 	}
 }
 
-void CONSOLE_Print( string message, bool log )
+void CONSOLE_Print( string message, int color, bool log )
 {
-	CONSOLE_PrintNoCRLF( message, log );
+	CONSOLE_PrintNoCRLF( message, color, log );
 
 	if( !gCurses )
 		cout << endl;
 }
 
-void CONSOLE_PrintNoCRLF( string message, bool log )
+const unordered_map<wstring, int> tagColors = 
 {
-	if (gGProxy)
-		if (!gGProxy->m_Console)
-			return;
+	{ L"[BNET]", dye_light_red },
+	{ L"[INFO]", dye_light_aqua },
+	{ L"[ERROR]", dye_light_yellow },
+	{ L"[GPROXY]", dye_light_green }
+};
 
-	string::size_type loc = message.find( "]", 0 );
-	/*if (loc<34)
-		message.insert(1,34-loc,' ');
-	else
-		if (loc<45)
-			message.insert(1,45-loc,' ');*/
+void CONSOLE_PrintNoCRLF(string message, int color, bool log)
+{
+	if (gGProxy && !gGProxy->m_Console)
+		return;
 
+	string::size_type loc = message.find("]", 0);
 
-	bool normaldisplay = true;
-
-	if (gGProxy!=NULL)
+	if (gGProxy && !gGProxy->m_inconsole && gGProxy->m_UDPConsole)
 	{
-		if (!gGProxy->m_inconsole)
-			if (gGProxy->m_UDPConsole)
-			{
-				char  *msg;
-				msg = new char[message.length() + 1];
-				strncpy(msg,message.c_str(), message.length());
-				msg[message.length()]=0;
-				gGProxy->UDPChatSend(msg);
-				if (message.find("]") == string :: npos)
-					gGProxy->UDPChatSend("|Chate "+UTIL_ToString(gGProxy->m_Username.length())+" " +gGProxy->m_Username+" "+message);
-				size_t pos = message.find("GPROXY]");
-				if (pos != string :: npos)
-					gGProxy->UDPChatSend("|Chate "+UTIL_ToString(gGProxy->m_Username.length())+" " +gGProxy->m_Username+" "+message.substr(pos+8,message.length()));
-
-//				normaldisplay = false;
-			}
+		gGProxy->UDPChatSend(message.c_str());
+		if (message.find("]") == string::npos)
+			gGProxy->UDPChatSend("|Chate " + UTIL_ToString(gGProxy->m_Username.length()) + " " + gGProxy->m_Username + " " + message);
+		size_t pos = message.find("GPROXY]");
+		if (pos != string::npos)
+			gGProxy->UDPChatSend("|Chate " + UTIL_ToString(gGProxy->m_Username.length()) + " " + gGProxy->m_Username + " " + message.substr(pos + 8, message.length()));
 	}
 
-	if (normaldisplay)
+	ColoredLine line = {};
+	wstring wmessage = Utf8ToWide(message);
+
+	bool matched = false;
+	for (const auto& concac : tagColors)
 	{
-		gMainBuffer.push_back( message );
-
-		if( gMainBuffer.size( ) > 100 )
-			gMainBuffer.erase( gMainBuffer.begin( ) );
-
-		gMainWindowChanged = true;
-		CONSOLE_Draw( );
+		if (wmessage.find(concac.first) == 0)
+		{
+			line.segments.push_back({ concac.first, concac.second });
+			line.segments.push_back({ wmessage.substr(concac.first.length()), color });
+			matched = true;
+			break;
+		}
 	}
+
+	if (!matched)
+		line.segments.push_back({ wmessage, color });
+
+	gMainBuffer.push_back(line);
+	if( gMainBuffer.size( ) > 100 )
+		gMainBuffer.erase( gMainBuffer.begin( ) );
+	gMainWindowChanged = true;
+	CONSOLE_Draw( );
 
 	if( log )
 		LOG_Print( message );
@@ -202,13 +236,16 @@ void CONSOLE_Draw( )
 		wclear( gMainWindow );
 		wmove( gMainWindow, 0, 0 );
 
-		for( vector<string> :: iterator i = gMainBuffer.begin( ); i != gMainBuffer.end( ); i++ )
+		for(auto i = gMainBuffer.begin( ); i != gMainBuffer.end( ); i++ )
 		{
-			for( string :: iterator j = (*i).begin( ); j != (*i).end( ); j++ )
-				waddch( gMainWindow, *j );
-
-			if( i != gMainBuffer.end( ) - 1 )
-				waddch( gMainWindow, '\n' );
+			for (auto seg = i->segments.begin(); seg != i->segments.end(); ++seg)
+			{
+				wattron(gMainWindow, COLOR_PAIR(seg->color_pair)); // Bật màu
+				waddwstr(gMainWindow, seg->text.c_str());
+				wattroff(gMainWindow, COLOR_PAIR(seg->color_pair)); // Tắt màu
+			}
+			if (i != gMainBuffer.end() - 1)
+				waddch(gMainWindow, L'\n');
 		}
 
 		wrefresh( gMainWindow );
@@ -282,32 +319,30 @@ void Process_Command( )
 	string Command = gInputBuffer;
 	transform( Command.begin( ), Command.end( ), Command.begin( ), (int(*)(int))tolower );
 
-	if( Command == "#commands" )
+	if( Command == "#commands" || Command == "#command")
 	{
 		CONSOLE_Print( ">>> #commands" );
-		CONSOLE_Print( "", false );
-		CONSOLE_Print( "  In the GProxy++ console:", false );
-		CONSOLE_Print( "  #commands           : show command list", false );
-		CONSOLE_Print( "  #exit or #quit      : close GProxy++", false );
-		CONSOLE_Print( "  #filter <f>         : start filtering public game names for <f>", false );
-		CONSOLE_Print( "  #filteroff          : stop filtering public game names", false );
-		CONSOLE_Print( "  #game <gamename>    : look for a specific game named <gamename>", false );
-		CONSOLE_Print( "  #help               : show help text", false );
-		CONSOLE_Print( "  #public             : enable listing of public games", false );
-		CONSOLE_Print( "  #publicoff          : disable listing of public games", false );
-		CONSOLE_Print( "  /r <message>        : reply to the last received whisper", false );
-//#ifdef WIN32
-//		CONSOLE_Print( "   /start              : start warcraft 3", false );
-//#endif
-		CONSOLE_Print( "   #ersion            : show version text", false );
-		CONSOLE_Print( "   #cfg               : reload config", false );
-		CONSOLE_Print( "", false );
-		CONSOLE_Print( "  In game:", false );
-		CONSOLE_Print( "   /re <message>       : reply to the last received whisper", false );
-		CONSOLE_Print( "   /sc                 : whispers \"spoofcheck\" to the game host", false );
-		CONSOLE_Print( "   /status             : show status information", false );
-		CONSOLE_Print( "   /w <user> <message> : whispers <message> to <user>", false );
-		CONSOLE_Print( "", false );
+		CONSOLE_Print( "", 0, false );
+		CONSOLE_Print( "  In the GProxy++ console:", dye_light_purple, false );
+		CONSOLE_Print( "   #commands           : show command list", 0, false );
+		CONSOLE_Print( "   #exit or #quit      : close GProxy++", 0, false );
+		CONSOLE_Print( "   #filter <f>         : start filtering public game names for <f>", 0, false );
+		CONSOLE_Print( "   #filteroff          : stop filtering public game names", 0, false );
+		CONSOLE_Print( "   #game <gamename>    : look for a specific game named <gamename>", 0, false );
+		CONSOLE_Print( "   #help               : show help text", 0, false );
+		CONSOLE_Print( "   #public             : enable listing of public games", 0, false );
+		CONSOLE_Print( "   #publicoff          : disable listing of public games", 0, false );
+		CONSOLE_Print( "   #version            : show version text", 0, false );
+		CONSOLE_Print( "   #cfg                : reload config", 0, false );
+		CONSOLE_Print( u8"   #war                : Thay đổi phiên bản war3", 0, false);
+		CONSOLE_Print( "", 0, false);
+		CONSOLE_Print( "  In Game: ", dye_light_purple, false);
+		CONSOLE_Print( "   /r <message>        : reply to the last received whisper", 0, false);
+		CONSOLE_Print( "   /re <message>       : reply to the last received whisper", 0, false );
+		CONSOLE_Print( "   /sc                 : whispers \"spoofcheck\" to the game host", 0, false );
+		CONSOLE_Print( "   /status             : show status information", 0, false );
+		CONSOLE_Print( "   /w <user> <message> : whispers <message> to <user>", 0, false );
+		CONSOLE_Print( "", 0, false );
 	}
 	else if( Command == "#exit" || Command == "#quit" )
 	{
@@ -317,14 +352,14 @@ void Process_Command( )
 	else if (Command == "#rf")
 	{
 		gGProxy->m_BNET->QueueGetGameList(20);
-		CONSOLE_Print(u8"[BNET] Lam moi list Game");
+		CONSOLE_Print(u8"[BNET] Làm mới danh sách trò chơi", dye_light_purple);
 	}
 	else if (Command.size() >= 6 && Command.substr(0, 5) == "#war ")
 	{
 		string war3ver = gInputBuffer.substr(5);
 		if (war3ver != "24" && war3ver != "26" && war3ver != "27" && war3ver != "28" && war3ver != "29" && war3ver != "31")
 		{
-			CONSOLE_Print("[BNET] Nhap khong dung phien ban.");
+			CONSOLE_Print(u8"[BNET] Nhập không đúng phiên bản");
 		}
 		else
 		{
@@ -341,7 +376,7 @@ void Process_Command( )
 			gRestart = true;
 
 			system("cls");
-			CONSOLE_Print("[INFO] Khoi dong lai GProxy " + gGProxy->m_Version);
+			CONSOLE_Print(u8"[INFO] Khởi động lại GProxy " + gGProxy->m_Version);
 			gInputBuffer.clear();
 			return;
 		}
@@ -362,7 +397,7 @@ void Process_Command( )
 		gGProxy->m_BNET->SetPublicGameFilter( string( ) );
 		CONSOLE_Print( "[BNET] stopped filtering public game names" );
 	}
-	else if( Command == "#rcfg" )
+	else if( Command == "#cfg" )
 	{
 		gGProxy->ReloadConfig();
 		CONSOLE_Print( "[GPROXY] reloading config file" );
@@ -435,33 +470,6 @@ void Process_Command( )
 		else
 			CONSOLE_Print( "[BNET] nobody has whispered you yet" );
 	}
-#ifdef WIN32
-	else if( Command == "#start" )
-	{
-		STARTUPINFO si;
-		PROCESS_INFORMATION pi;
-		ZeroMemory( &si, sizeof( si ) );
-		si.cb = sizeof( si );
-		ZeroMemory( &pi, sizeof( pi ) );
-		string War3EXE;
-
-		if( !gGProxy->m_CDKeyTFT.empty( ) )
-			War3EXE = gGProxy->m_War3Path + "Frozen Throne.exe";
-		else
-			War3EXE = gGProxy->m_War3Path + "Warcraft III.exe";
-
-		BOOL hProcess = CreateProcessA( War3EXE.c_str( ), NULL, NULL, NULL, FALSE, NORMAL_PRIORITY_CLASS, NULL, gGProxy->m_War3Path.c_str( ), LPSTARTUPINFOA( &si ), &pi );
-
-		if( !hProcess )
-			CONSOLE_Print( "[GPROXY] failed to start warcraft 3" );
-		else
-		{
-			CONSOLE_Print( "[GPROXY] started warcraft 3" );
-			CloseHandle( pi.hProcess );
-			CloseHandle( pi.hThread );
-		}
-	}
-#endif
 	else if( Command == "#version" )
 		CONSOLE_Print( "[GPROXY] GProxy++ Version " + gGProxy->m_Version );
 	else
@@ -475,8 +483,10 @@ void Process_Command( )
 
 int main(int argc, char **argv)
 {
-	//SetConsoleOutputCP(CP_UTF8);
-	//SetConsoleCP(CP_UTF8);
+	SetConsoleOutputCP(CP_UTF8);
+	SetConsoleCP(CP_UTF8);
+
+	//setlocale(LC_ALL, "");
 
 	string CFGFile;
 
@@ -504,7 +514,6 @@ int main(int argc, char **argv)
 	CONSOLE_Print( "[GPROXY] setting process priority to \"above normal\"" );
 	SetPriorityClass( GetCurrentProcess( ), ABOVE_NORMAL_PRIORITY_CLASS );
 
-	string UserBot;
 	string War3Path;
 	string CDKeyROC;
 	string CDKeyTFT;
@@ -526,225 +535,122 @@ int main(int argc, char **argv)
 	bool UDPConsole = true;
 	bool FilterGProxy = false;
 
-	if(!CFG.Exists( "server" ) || !CFG.Exists( "username" ) || !CFG.Exists( "password" ) || !CFG.Exists( "channel" ) )
-	{
-		CONSOLE_Print( "", false );
-		CONSOLE_Print( "  It looks like this is your first time running GProxy++.", false );
-		CONSOLE_Print( "  GProxy++ needs some information about your computer and about yourself.", false );
-		CONSOLE_Print( "", false );
-		CONSOLE_Print( "  This information will be saved to the file \"" + CFGFile + "\" in plain text.", false );
-		CONSOLE_Print( "  You can update this information at any time by editing the above file.", false );
-		CONSOLE_Print( "", false );
+	War3Path = "";
+	CDKeyROC = CFG.GetString( "cdkeyroc", "FFFFFFFFFFFFFFFFFFFFFFFFFF");
+	CDKeyTFT = CFG.GetString( "cdkeytft", "FFFFFFFFFFFFFFFFFFFFFFFFFF");
+	Server = CFG.GetString( "server", string( ) );
+	Username = CFG.GetString( "username", string( ) );
+	Password = CFG.GetString( "password", string( ) );
+	Channel = CFG.GetString( "channel", string( ) );
+	War3Version = CFG.GetInt( "war3version", War3Version );
+	Port = CFG.GetInt( "port", Port );
+	EXEVersion = (BYTEARRAY)0;
+	EXEVersionHash = (BYTEARRAY)0;
+	PasswordHashType = CFG.GetString( "passwordhashtype", string( ) );
+	UDPBindIP = CFG.GetString( "udp_cmdbindip", "0.0.0.0" );
+	UDPPort = CFG.GetInt( "udp_cmdport", 6959  );
+	GUIPort = CFG.GetInt( "udp_guiport", 5858  );
+	UDPConsole = CFG.GetInt( "udp_console", 1 ) == 0 ? false : true;
+	PublicGames = CFG.GetInt( "publicgames", 1 ) == 0 ? false : true;
+	FilterGProxy = CFG.GetInt( "filtergproxy", 0 ) == 0 ? false : true;
+	Hosts = CFG.GetString( "filterhosts", string());
+	UDPPassword = CFG.GetString( "udp_password", string () );
 
-		string RegistryWar3Path;
-		HKEY hkey;
-		LSTATUS s = RegOpenKeyExA( HKEY_CURRENT_USER, "Software\\Blizzard Entertainment\\Warcraft III", 0, KEY_QUERY_VALUE, &hkey );
-
-		if( s == ERROR_SUCCESS )
-		{
-			char InstallPath[256];
-			DWORD InstallPathSize = 256;
-			RegQueryValueExA( hkey, "InstallPath", NULL, NULL, (LPBYTE)InstallPath, &InstallPathSize );
-			RegistryWar3Path = InstallPath;
-			RegCloseKey( hkey );
-		}
-
-		CONSOLE_Print( "  Enter the path to your Warcraft III install folder.", false );
-		CONSOLE_Print( "  If you want to use the detected path just leave it blank (press enter).", false );
-		CONSOLE_Print( "", false );
-		CONSOLE_PrintNoCRLF( "  Install Path [" + RegistryWar3Path + "]: ", false );
-		getline( cin, War3Path );
-
-		if( War3Path.empty( ) )
-			War3Path = RegistryWar3Path;
-
-		War3Path = UTIL_AddPathSeperator( War3Path );
-
-		CONSOLE_Print( "", false );
-		CONSOLE_Print( "  Enter your CD key(s) with or without dashes, capital letters or lowercase.", false );
-		CONSOLE_Print( "", false );
-
-		do
-		{
-			CONSOLE_PrintNoCRLF( "  Reign of Chaos CD key: ", false );
-			getline( cin, CDKeyROC );
-			CDKeyROC.erase( remove( CDKeyROC.begin( ), CDKeyROC.end( ), '-' ), CDKeyROC.end( ) );
-			transform( CDKeyROC.begin( ), CDKeyROC.end( ), CDKeyROC.begin( ), (int(*)(int))toupper );
-		} while( CDKeyROC.size( ) != 26 );
-
-		CONSOLE_Print( "", false );
-
-		do
-		{
-			CONSOLE_PrintNoCRLF( "  Frozen Throne CD key: ", false );
-			getline( cin, CDKeyTFT );
-			CDKeyTFT.erase( remove( CDKeyTFT.begin( ), CDKeyTFT.end( ), '-' ), CDKeyTFT.end( ) );
-			transform( CDKeyTFT.begin( ), CDKeyTFT.end( ), CDKeyTFT.begin( ), (int(*)(int))toupper );
-		} while( !CDKeyTFT.empty( ) && CDKeyTFT.size( ) != 26 );
-
-		CONSOLE_Print( "", false );
-		CONSOLE_Print( "  Select a battle.net server to connect to.", false );
-		CONSOLE_Print( "  Enter one of the following numbers (1-4) or enter a custom address.", false );
-		CONSOLE_Print( "  1. US West (Lordaeron)", false );
-		CONSOLE_Print( "  2. US East (Azeroth)", false );
-		CONSOLE_Print( "  3. Asia (Kalimdor)", false );
-		CONSOLE_Print( "  4. Europe (Northrend)", false );
-		CONSOLE_Print( "", false );
-
-		do
-		{
-			CONSOLE_PrintNoCRLF( "  Server: ", false );
-			getline( cin, Server );
-			transform( Server.begin( ), Server.end( ), Server.begin( ), (int(*)(int))tolower );
-
-			if( Server == "1" || Server == "1." || Server == "us west" || Server == "uswest" || Server == "west" || Server == "lordaeron" )
-				Server = "uswest.battle.net";
-			else if( Server == "2" || Server == "2." || Server == "us east" || Server == "useast" || Server == "east" || Server == "azeroth" )
-				Server = "useast.battle.net";
-			else if( Server == "3" || Server == "3." || Server == "asia" || Server == "kalimdor" )
-				Server = "asia.battle.net";
-			else if( Server == "4" || Server == "4." || Server == "europe" || Server == "northrend" )
-				Server = "europe.battle.net";
-		} while( Server.empty( ) );
-
-		CONSOLE_Print( "", false );
-		CONSOLE_Print( "  What is your battle.net username?", false );
-		CONSOLE_Print( "", false );
-
-		do
-		{
-			CONSOLE_PrintNoCRLF( "  Username: ", false );
-			getline( cin, Username );
-		} while( Username.empty( ) );
-
-		CONSOLE_Print( "", false );
-		CONSOLE_Print( "  What is your battle.net password?", false );
-		CONSOLE_Print( "  Note that your password will be visible as you type it.", false );
-		CONSOLE_Print( "", false );
-
-		do
-		{
-			CONSOLE_PrintNoCRLF( "  Password: ", false );
-			getline( cin, Password );
-		} while( Password.empty( ) );
-
-		CONSOLE_Print( "", false );
-		CONSOLE_Print( "  What battle.net channel do you want to start in?", false );
-		CONSOLE_Print( "", false );
-
-		do
-		{
-			CONSOLE_PrintNoCRLF( "  Channel: ", false );
-			getline( cin, Channel );
-		} while( Channel.empty( ) );
-
-		CONSOLE_Print( "", false );
-		CONSOLE_Print( "  Done. Saving configuration to \"" + CFGFile + "\".", false );
-
-		ofstream out;
-		out.open(CFGFile.c_str( ) );
-
-		if( out.fail( ) )
-			CONSOLE_Print( "  Error saving configuration file.", false );
-		else
-		{
-			out << "### required config values" << endl;
-			out << endl;
-			//out << "war3path = " << War3Path << endl;
-			out << "cdkeyroc = " << CDKeyROC << endl;
-			out << "cdkeytft = " << CDKeyTFT << endl;
-			out << "server = " << Server << endl;
-			out << "username = " << Username << endl;
-			out << "password = " << Password << endl;
-			out << "channel = " << Channel << endl;
-			out << endl;
-			out << "### optional config values" << endl;
-			out << endl;
-			out << "war3version = " << War3Version << endl;
-			out << "port = " << Port << endl;
-			//out << "exeversion =" << endl;
-			//out << "exeversionhash =" << endl;
-			out << "passwordhashtype =" << endl;
-			out << "udp_cmdbindip = 0.0.0.0" << endl;
-			out << "udp_cmdport = 6959" << endl;
-			out << "udp_guiport = 5858" << endl;
-			out << "udp_console = 1" << endl;
-			out << "filterhosts = " << endl;
-			out << "filtergproxy = 0" << endl;
-			out << "udp_password = " << endl;
-			out << "udp_commandtrigger = ." << endl;
-
-			out.close( );
-		}
-	}
-	else
-	{
-		//War3Path = CFG.GetString( "war3path", string( ) );
-		War3Path = "";
-		UserBot = CFG.GetString("UserBot", string());
-		CDKeyROC = CFG.GetString( "cdkeyroc", "FFFFFFFFFFFFFFFFFFFFFFFFFF");
-		CDKeyTFT = CFG.GetString( "cdkeytft", "FFFFFFFFFFFFFFFFFFFFFFFFFF");
-		Server = CFG.GetString( "server", string( ) );
-		Username = CFG.GetString( "username", string( ) );
-		Password = CFG.GetString( "password", string( ) );
-		Channel = CFG.GetString( "channel", string( ) );
-		War3Version = CFG.GetInt( "war3version", War3Version );
-		Port = CFG.GetInt( "port", Port );
-		//EXEVersion = UTIL_ExtractNumbers( CFG.GetString( "exeversion", string( ) ), 4 );
-		//EXEVersionHash = UTIL_ExtractNumbers( CFG.GetString( "exeversionhash", string( ) ), 4 );
-		EXEVersion = (BYTEARRAY)0;
-		EXEVersionHash = (BYTEARRAY)0;
-		PasswordHashType = CFG.GetString( "passwordhashtype", string( ) );
-		UDPBindIP = CFG.GetString( "udp_cmdbindip", "0.0.0.0" );
-		UDPPort = CFG.GetInt( "udp_cmdport", 6959  );
-		GUIPort = CFG.GetInt( "udp_guiport", 5858  );
-		UDPConsole = CFG.GetInt( "udp_console", 1 ) == 0 ? false : true;
-		PublicGames = CFG.GetInt( "publicgames", 1 ) == 0 ? false : true;
-		FilterGProxy = CFG.GetInt( "filtergproxy", 0 ) == 0 ? false : true;
-		Hosts = CFG.GetString( "filterhosts", string());
-		UDPPassword = CFG.GetString( "udp_password", string () );
-		UDPTrigger = CFG.GetString( "udp_commandtrigger", "." );
-	}
 	transform( Hosts.begin( ), Hosts.end( ), Hosts.begin( ), (int(*)(int))tolower );
 
-	CONSOLE_Print( "", false );
-	CONSOLE_Print( "  Welcome to GProxy.", false );
-	CONSOLE_Print( "  Server: " + Server, false );
-	CONSOLE_Print( "  Username: " + Username, false );
-	CONSOLE_Print( "  Channel: " + Channel, false );
-	CONSOLE_Print( "", false );
+	if (!CFG.Exists("server"))
+	{
+		CONSOLE_PrintNoCRLF(u8"  Nhập tên máy chủ hoặc IP: ", dye_light_yellow, false);
+		getline(cin, Server);
+		transform(Server.begin(), Server.end(), Server.begin(), (int(*)(int))tolower);
+		if (Server.empty())
+			Server = "pvpgn.mobavietnam.com";
 
-	// initialize curses
+		CFG.ReplaceKeyValue("server", Server);
+	}
+
+	if (!CFG.Exists("username"))
+	{
+		CONSOLE_PrintNoCRLF(u8"  Tên tài khoản: ", dye_light_yellow, false);
+		getline(cin, Username);
+		CFG.ReplaceKeyValue("username", Username);
+	}
+
+	if (!CFG.Exists("password"))
+	{
+		CONSOLE_PrintNoCRLF(u8"  Mật khẩu: ", dye_light_yellow, false);
+		getline(cin, Password);
+		CFG.ReplaceKeyValue("password", Password);
+	}
+
+	if (!CFG.Exists("channel"))
+	{
+		CONSOLE_PrintNoCRLF(u8"  Mật khẩu: ", dye_light_yellow, false);
+		getline(cin, Channel);
+		if (Channel.empty())
+			Channel = "Warcraft 3 Frozen Throne";
+		CFG.ReplaceKeyValue("channel", Channel);
+	}
+
+	CONSOLE_Print("", 0, false);
+	CONSOLE_Print("  Welcome to GProxy.", 0, false);
+	CONSOLE_Print("  Server: " + Server, 0, false);
+	CONSOLE_Print("  Username: " + Username, 0, false);
+	CONSOLE_Print("  Channel: " + Channel, 0, false);
+	CONSOLE_Print("", 0, false);
 
 	gCurses = true;
-	initscr( );
-	resize_term( 28, 97 );
-	clear( );
-	noecho( );
-	cbreak( );
-	gMainWindow = newwin( LINES - 3, COLS - 17, 0, 0 );
-	gBottomBorder = newwin( 1, COLS, LINES - 3, 0 );
-	gRightBorder = newwin( LINES - 3, 1, 0, COLS - 17 );
-	gInputWindow = newwin( 2, COLS, LINES - 2, 0 );
-	gChannelWindow = newwin( LINES - 3, 16, 0, COLS - 16 );
-	mvwhline( gBottomBorder, 0, 0, 0, COLS );
-	mvwvline( gRightBorder, 0, 0, 0, LINES );
-	wrefresh( gBottomBorder );
-	wrefresh( gRightBorder );
-	scrollok( gMainWindow, TRUE );
-	keypad( gInputWindow, TRUE );
-	scrollok( gInputWindow, TRUE );
-	CONSOLE_Print( "  Type /help at any time for help.", false );
-//	CONSOLE_Print( "  Press any key to continue.", false );
-	CONSOLE_Print( "", false );
-	CONSOLE_Draw( );
-//	wgetch( gInputWindow );
-	nodelay( gInputWindow, TRUE );
+	initscr();
 
-	// initialize gproxy
+	start_color();
+
+	init_pair(dye_green, COLOR_GREEN, COLOR_BLACK);
+	init_pair(dye_red, COLOR_RED, COLOR_BLACK);
+	init_pair(dye_yellow, COLOR_YELLOW, COLOR_BLACK);
+	init_pair(dye_blue, COLOR_BLUE, COLOR_BLACK);
+	init_pair(dye_purple, COLOR_MAGENTA, COLOR_BLACK);
+	init_color(dye_light_red, 1000, 400, 400);
+	init_pair(dye_light_red, dye_light_red, COLOR_BLACK);
+	init_color(dye_light_green, 400, 1000, 400);
+	init_pair(dye_light_green, dye_light_green, COLOR_BLACK);
+	init_color(dye_grey, 600, 600, 600);
+	init_pair(dye_grey, dye_grey, COLOR_BLACK);
+	init_color(dye_light_blue, 400, 400, 1000);
+	init_pair(dye_light_blue, dye_light_blue, COLOR_BLACK);
+	init_color(dye_light_aqua, 400, 1000, 1000);
+	init_pair(dye_light_aqua, dye_light_aqua, COLOR_BLACK);
+	init_color(dye_light_purple, 800, 400, 800);
+	init_pair(dye_light_purple, dye_light_purple, COLOR_BLACK);
+	init_color(dye_light_yellow, 1000, 1000, 400);
+	init_pair(dye_light_yellow, dye_light_yellow, COLOR_BLACK);
+	init_color(dye_bright_white, 1000, 1000, 1000);
+	init_pair(dye_bright_white, dye_bright_white, COLOR_BLACK);
+
+	resize_term(28, 97);
+	clear();
+	noecho();
+	cbreak();
+
+	gMainWindow = newwin(LINES - 3, COLS - 17, 0, 0);
+	gBottomBorder = newwin(1, COLS, LINES - 3, 0);
+	gRightBorder = newwin(LINES - 3, 1, 0, COLS - 17);
+	gInputWindow = newwin(2, COLS, LINES - 2, 0);
+	gChannelWindow = newwin(LINES - 3, 16, 0, COLS - 16);
+	mvwhline(gBottomBorder, 0, 0, 0, COLS);
+	mvwvline(gRightBorder, 0, 0, 0, LINES);
+	wrefresh(gBottomBorder);
+	wrefresh(gRightBorder);
+	scrollok(gMainWindow, TRUE);
+	keypad(gInputWindow, TRUE);
+	scrollok(gInputWindow, TRUE);
+
+	nodelay(gInputWindow, TRUE);
+
+	CONSOLE_Print( "  Type /help at any time for help.", 0, false );
+	CONSOLE_Print( "", 0, false );
+	CONSOLE_Draw( );
 
 	gGProxy = new CGProxy( Hosts, UDPBindIP, UDPPort, GUIPort, UDPConsole, PublicGames, FilterGProxy, UDPPassword, UDPTrigger, !CDKeyTFT.empty( ), War3Path, CDKeyROC, CDKeyTFT, Server, Username, Password, Channel, War3Version, Port, EXEVersion, EXEVersionHash, PasswordHashType );
-
 
 	while( 1 )
 	{
@@ -845,7 +751,7 @@ int main(int argc, char **argv)
 
 	// shutdown curses
 
-	endwin( );
+	endwin();
 	return 0;
 }
 
@@ -855,7 +761,7 @@ int main(int argc, char **argv)
 
 CGProxy :: CGProxy( string nHosts, string nUDPBindIP, uint16_t nUDPPort, uint16_t nGUIPort, bool nUDPConsole, bool nPublicGames, bool nFilterGProxy, string nUDPPassword, string nUDPTrigger, bool nTFT, string nWar3Path, string nCDKeyROC, string nCDKeyTFT, string nServer, string nUsername, string nPassword, string nChannel, uint32_t nWar3Version, uint16_t nPort, BYTEARRAY nEXEVersion, BYTEARRAY nEXEVersionHash, string nPasswordHashType )
 {
-	m_Version = "1.9 (22/07/2025) Edit by Thai Son";
+	m_Version = "2.0 (04/08/2025) Edit by Thai Son";
 	m_LocalServer = new CTCPServer( );
 	m_LocalSocket = NULL;
 	m_RemoteSocket = new CTCPClient( );
@@ -867,7 +773,6 @@ CGProxy :: CGProxy( string nHosts, string nUDPBindIP, uint16_t nUDPPort, uint16_
 	m_UDPCommandSocket->Bind(nUDPBindIP, nUDPPort);
 	m_UDPConsole = nUDPConsole;
 	m_UDPPassword = nUDPPassword;
-	m_UDPTrigger = nUDPTrigger;
 	m_Console = true;
 	m_GUIPort = nGUIPort;
 	m_CMDPort = nUDPPort;
@@ -2387,5 +2292,4 @@ void CGProxy :: ReloadConfig ()
 	string nHosts = CFG->GetString( "filterhosts", string());
 	UTIL_ExtractStrings(nHosts, m_Hosts);
 	m_UDPPassword = CFG->GetString( "udp_password", string () );
-	m_UDPTrigger = CFG->GetString( "udp_commandtrigger", "." );
 }
