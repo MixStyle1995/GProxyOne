@@ -411,12 +411,12 @@ void CTCPClient :: Connect( string localaddress, string address, uint16_t port )
 
 	if( connect( m_Socket, (struct sockaddr *)&m_SIN, sizeof( m_SIN ) ) == SOCKET_ERROR )
 	{
-		if( GetLastError( ) != EINPROGRESS && GetLastError( ) != EWOULDBLOCK )
+		if(WSAGetLastError( ) != EINPROGRESS && WSAGetLastError( ) != EWOULDBLOCK )
 		{
 			// connect error
 
 			m_HasError = true;
-			m_Error = GetLastError( );
+			m_Error = WSAGetLastError( );
 			CONSOLE_Print( "[TCPCLIENT] error (connect) - " + GetErrorString( ) );
 			return;
 		}

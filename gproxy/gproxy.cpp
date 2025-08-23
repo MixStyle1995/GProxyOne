@@ -28,6 +28,9 @@
 #include "gameprotocol.h"
 #include "gpsprotocol.h"
 
+#include "curses.h"
+#include "CMDNSScanner.h"
+
 #include <signal.h>
 #include <stdlib.h>
 #include <windows.h>
@@ -38,10 +41,20 @@
 #include <unordered_map>
 #include <fcntl.h>
 #include <io.h>
+#include <tchar.h>
 
-#include "curses.h"
+#include <d3d9.h>
+#pragma comment(lib, "d3d9.lib")
 
-#include "CMDNSScanner.h"
+#include <imgui.h>
+#include <backends/imgui_impl_win32.h>
+#include <backends/imgui_impl_dx9.h>
+
+#include <asio.hpp>
+
+using asio::ip::tcp;
+
+void GuiThread();
 
 struct ColoredSegment
 {
@@ -53,23 +66,6 @@ struct ColoredLine
 {
 	vector<ColoredSegment> segments;
 };
-
-#define dye_black			0
-#define dye_blue			1
-#define dye_green			2
-#define dye_aqua			3
-#define dye_red				4
-#define dye_purple			5
-#define dye_yellow			6
-#define dye_white			7
-#define dye_grey			8
-#define dye_light_blue		9
-#define dye_light_green		10
-#define dye_light_aqua		11
-#define dye_light_red		12
-#define dye_light_purple	13
-#define dye_light_yellow	14
-#define dye_bright_white	15
 
 bool gCurses = false;
 vector<ColoredLine> gMainBuffer;
@@ -90,6 +86,8 @@ CGProxy *gGProxy = NULL;
 
 uint32_t War3Version = 24;
 bool          gRestart = false;
+
+string szIpUpFileAuraBot;
 
 uint32_t GetTime( )
 {
@@ -122,23 +120,24 @@ void LOG_Print( string message )
 	}
 }
 
-void CONSOLE_Print( string message, int color, bool log )
+void CONSOLE_Print( string message, int color, bool log, int tsline)
 {
-	CONSOLE_PrintNoCRLF( message, color, log );
+	CONSOLE_PrintNoCRLF( message, color, log, tsline);
 
-	if( !gCurses )
+	if (!gCurses)
 		cout << endl;
 }
 
 const unordered_map<wstring, int> tagColors = 
 {
-	{ L"[BNET]", dye_light_red },
+	{ L"[BNET]", dye_light_yellow },
 	{ L"[INFO]", dye_light_aqua },
-	{ L"[ERROR]", dye_light_yellow },
-	{ L"[GPROXY]", dye_light_green }
+	{ L"[ERROR]", dye_light_red },
+	{ L"[GPROXY]", dye_light_green },
+	{ L"[TCPCLIENT]", dye_light_green },
 };
 
-void CONSOLE_PrintNoCRLF(string message, int color, bool log)
+void CONSOLE_PrintNoCRLF(string message, int color, bool log, int tsline)
 {
 	if (gGProxy && !gGProxy->m_Console)
 		return;
@@ -177,13 +176,15 @@ void CONSOLE_PrintNoCRLF(string message, int color, bool log)
 	if( gMainBuffer.size( ) > 100 )
 		gMainBuffer.erase( gMainBuffer.begin( ) );
 	gMainWindowChanged = true;
-	CONSOLE_Draw( );
+	CONSOLE_Draw(tsline);
 
 	if( log )
 		LOG_Print( message );
 
-	if( !gCurses )
+	if (!gCurses)
+	{
 		cout << message;
+	}
 }
 
 void CONSOLE_ChangeChannel( string channel )
@@ -224,7 +225,7 @@ void CONSOLE_RemoveChannelUsers( )
 	gChannelWindowChanged = true;
 }
 
-void CONSOLE_Draw( )
+void CONSOLE_Draw(int tsline)
 {
 	if( !gCurses )
 		return;
@@ -314,6 +315,89 @@ void CONSOLE_Resize( )
 	CONSOLE_Draw( );
 }
 
+bool sendAll(tcp::socket& socket, const void* buf, size_t len)
+{
+	const char* p = (const char*)buf;
+	size_t sent = 0;
+	while (sent < len)
+	{
+		sent += asio::write(socket, asio::buffer(p + sent, len - sent));
+	}
+	return true;
+}
+
+void uploadmap(string szIp, string MapDir, uint32_t version)
+{
+	removeSubstrs<char>(MapDir, "\"");
+
+	if (MapDir.empty())
+	{
+		CONSOLE_Print(u8"[ERROR] Không thấy đường dẫn File");
+		return;
+	}
+
+	std::string path = MapDir;
+	std::ifstream in(path, std::ios::binary | std::ios::ate);
+	if (!in)
+	{
+		CONSOLE_Print(u8"[ERROR] Không mở được file");
+		return;
+	}
+
+	std::string name = path;
+	size_t pos = name.find_last_of("/\\");
+	if (pos != std::string::npos) name = name.substr(pos + 1);
+
+	in.seekg(0, std::ios::end);
+	uint64_t fileSize = in.tellg();
+	in.seekg(0);
+
+	asio::io_context io;
+	tcp::socket socket(io);
+	socket.connect({ asio::ip::make_address(szIp), 9000 });
+
+	uint16_t nameLen = (uint16_t)name.size();
+	sendAll(socket, &nameLen, sizeof(nameLen));
+	sendAll(socket, &fileSize, sizeof(fileSize));
+	sendAll(socket, &version, sizeof(version));
+	sendAll(socket, name.data(), name.size());
+
+	std::vector<char> buf(1 << 16);
+	uint64_t sent = 0;
+	while (in)
+	{
+		auto start = std::chrono::steady_clock::now();
+
+		in.read(buf.data(), buf.size());
+		std::streamsize n = in.gcount();
+		if (n <= 0) break;
+		sendAll(socket, buf.data(), (size_t)n);
+		sent += (uint64_t)n;
+
+		// hiển thị tiến độ
+		double uploadedMB = sent / (1024.0 * 1024.0);
+		double totalMB = fileSize / (1024.0 * 1024.0);
+		int percent = (totalMB > 0) ? (int)((uploadedMB / totalMB) * 100) : 0;
+
+		// tính tốc độ MB/s
+		auto now = std::chrono::steady_clock::now();
+		double elapsed = std::chrono::duration<double>(now - start).count();
+		double speedMBps = (elapsed > 0) ? (uploadedMB / elapsed) : 0.0;
+
+		std::ostringstream oss;
+		oss << "Tiến độ: " << (int)uploadedMB << " / " << (int)totalMB << " MB " << "(" << percent << "%) - ";
+
+		if (speedMBps < 1000.0)
+			oss << (int)speedMBps << " KB/s      ";
+		else
+			oss << (int)speedMBps << " MB/s      ";
+
+		CONSOLE_Print(u8"[INFO] " + oss.str(), 0, 0, 1);
+	}
+	in.close();
+	CONSOLE_Print(u8"[INFO] Upload File thành công");
+}
+
 void Process_Command( )
 {
 	string Command = gInputBuffer;
@@ -351,8 +435,26 @@ void Process_Command( )
 	}
 	else if (Command == "#rf")
 	{
-		gGProxy->m_BNET->QueueGetGameList(20);
+		gGProxy->m_BNET->QueueGetGameList(0xFF);
 		CONSOLE_Print(u8"[BNET] Làm mới danh sách trò chơi", dye_light_purple);
+	}
+	else if (Command.size() >= 6 && Command.substr(0, 5) == "#sip ")
+	{
+		szIpUpFileAuraBot = gInputBuffer.substr(5);
+		CONSOLE_Print(u8"[INFO] Set Server Upload File: " + szIpUpFileAuraBot);
+	}
+	else if (Command.size() >= 7 && (Command.substr(0, 6) == "#up24 " || Command.substr(0, 6) == "#up26 " || Command.substr(0, 6) == "#up27 " || Command.substr(0, 6) == "#up28 " || Command.substr(0, 6) == "#up29 " || Command.substr(0, 6) == "#up31 "))
+	{
+		if (!szIpUpFileAuraBot.empty())
+		{
+			string war3ver = Command.substr(3, 3);
+			string mapDir = gInputBuffer.substr(6);
+			uploadmap(szIpUpFileAuraBot, mapDir, atoi(war3ver.c_str()));
+		}
+		else
+		{
+			CONSOLE_Print(u8"[ERROR] Chưa nhập IP Server Upload");
+		}
 	}
 	else if (Command.size() >= 6 && Command.substr(0, 5) == "#war ")
 	{
@@ -410,24 +512,6 @@ void Process_Command( )
 		{
 			gGProxy->m_BNET->SetSearchGameName( GameName );
 			CONSOLE_Print( "[BNET] looking for a game named \"" + GameName + "\" for up to two minutes" );
-		}
-	}
-	else if (Command.size() >= 9 && Command.substr(0, 8) == "#create ")
-	{
-		string GameName = gInputBuffer.substr(8);
-
-		if (!GameName.empty() && GameName.size() <= 31)
-		{
-			if (gGProxy->m_BNET->GetLoggedIn())
-			{
-				gGProxy->m_BNET->QueueChatCommand("/w mixstyle !map LOD");
-				gGProxy->m_BNET->QueueChatCommand("/w mixstyle !pub " + GameName);
-
-				gGProxy->m_BNET->SetSearchGameName(GameName);
-				CONSOLE_Print("[BNET] looking for a game named \"" + GameName + "\" for up to two minutes");
-			}
-			else
-				gGProxy->SendLocalChat("You are not connected to battle.net.");
 		}
 	}
 	else if( Command == "#help" )
@@ -555,6 +639,7 @@ int main(int argc, char **argv)
 	FilterGProxy = CFG.GetInt( "filtergproxy", 0 ) == 0 ? false : true;
 	Hosts = CFG.GetString( "filterhosts", string());
 	UDPPassword = CFG.GetString( "udp_password", string () );
+	szIpUpFileAuraBot = CFG.GetString("serveruploadfile", string());
 
 	transform( Hosts.begin( ), Hosts.end( ), Hosts.begin( ), (int(*)(int))tolower );
 
@@ -564,7 +649,7 @@ int main(int argc, char **argv)
 		getline(cin, Server);
 		transform(Server.begin(), Server.end(), Server.begin(), (int(*)(int))tolower);
 		if (Server.empty())
-			Server = "pvpgn.mobavietnam.com";
+			Server = "160.187.146.137";
 
 		CFG.ReplaceKeyValue("server", Server);
 	}
@@ -652,6 +737,8 @@ int main(int argc, char **argv)
 
 	gGProxy = new CGProxy( Hosts, UDPBindIP, UDPPort, GUIPort, UDPConsole, PublicGames, FilterGProxy, UDPPassword, UDPTrigger, !CDKeyTFT.empty( ), War3Path, CDKeyROC, CDKeyTFT, Server, Username, Password, Channel, War3Version, Port, EXEVersion, EXEVersionHash, PasswordHashType );
 
+	//std::thread t(GuiThread);
+
 	while( 1 )
 	{
 		if( gGProxy->Update( 40000 ) )
@@ -732,6 +819,10 @@ int main(int argc, char **argv)
 			break;
 	}
 
+
+	PostQuitMessage(0);
+	//t.join();
+
 	// shutdown gproxy
 
 	CONSOLE_Print( "[GPROXY] shutting down" );
@@ -752,6 +843,7 @@ int main(int argc, char **argv)
 	// shutdown curses
 
 	endwin();
+
 	return 0;
 }
 
@@ -761,7 +853,7 @@ int main(int argc, char **argv)
 
 CGProxy :: CGProxy( string nHosts, string nUDPBindIP, uint16_t nUDPPort, uint16_t nGUIPort, bool nUDPConsole, bool nPublicGames, bool nFilterGProxy, string nUDPPassword, string nUDPTrigger, bool nTFT, string nWar3Path, string nCDKeyROC, string nCDKeyTFT, string nServer, string nUsername, string nPassword, string nChannel, uint32_t nWar3Version, uint16_t nPort, BYTEARRAY nEXEVersion, BYTEARRAY nEXEVersionHash, string nPasswordHashType )
 {
-	m_Version = "2.0 (04/08/2025) Edit by Thai Son";
+	m_Version = "2.0 (04/08/2025) chỉnh sửa bởi Thái Sơn";
 	m_LocalServer = new CTCPServer( );
 	m_LocalSocket = NULL;
 	m_RemoteSocket = new CTCPClient( );
@@ -820,7 +912,7 @@ CGProxy :: CGProxy( string nHosts, string nUDPBindIP, uint16_t nUDPPort, uint16_
 		CONSOLE_Print( "[BNET] listing of public games enabled" );
 	}
 
-	CONSOLE_Print( "[GPROXY] GProxy++ " + m_Version );
+	CONSOLE_Print( u8"[GPROXY] GProxy++ " + m_Version, dye_light_yellow);
 }
 
 CGProxy :: ~CGProxy( )
@@ -1846,11 +1938,8 @@ void CGProxy :: ProcessRemotePackets( )
 						uint32_t PacketsToUnqueue = LastPacket - PacketsAlreadyUnqueued;
 
 						if( PacketsToUnqueue > m_PacketBuffer.size( ) )
-						{
-							CONSOLE_Print( "[GPROXY] received GPS_RECONNECT with last packet > total packets sent" );
 							PacketsToUnqueue = m_PacketBuffer.size( );
-						}
-
+	
 						while( PacketsToUnqueue > 0 )
 						{
 							delete m_PacketBuffer.front( );
@@ -1886,15 +1975,12 @@ void CGProxy :: ProcessRemotePackets( )
 					uint32_t LastPacket = UTIL_ByteArrayToUInt32( Data, false, 4 );
 					uint32_t PacketsAlreadyUnqueued = m_TotalPacketsReceivedFromLocal - m_PacketBuffer.size( );
 
-					if( LastPacket > PacketsAlreadyUnqueued )
+					if (LastPacket > PacketsAlreadyUnqueued)
 					{
 						uint32_t PacketsToUnqueue = LastPacket - PacketsAlreadyUnqueued;
 
 						if( PacketsToUnqueue > m_PacketBuffer.size( ) )
-						{
-							CONSOLE_Print( "[GPROXY] received GPS_ACK with last packet > total packets sent" );
 							PacketsToUnqueue = m_PacketBuffer.size( );
-						}
 
 						while( PacketsToUnqueue > 0 )
 						{
@@ -2292,4 +2378,145 @@ void CGProxy :: ReloadConfig ()
 	string nHosts = CFG->GetString( "filterhosts", string());
 	UTIL_ExtractStrings(nHosts, m_Hosts);
 	m_UDPPassword = CFG->GetString( "udp_password", string () );
+}
+
+
+LPDIRECT3D9              g_pD3D = NULL;
+LPDIRECT3DDEVICE9        g_pd3dDevice = NULL;
+D3DPRESENT_PARAMETERS    g_d3dpp = {};
+
+LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
+
+bool CreateDeviceD3D(HWND hWnd)
+{
+	if ((g_pD3D = Direct3DCreate9(D3D_SDK_VERSION)) == NULL)
+		return false;
+
+	ZeroMemory(&g_d3dpp, sizeof(g_d3dpp));
+	g_d3dpp.Windowed = TRUE;
+	g_d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
+	g_d3dpp.BackBufferFormat = D3DFMT_UNKNOWN;
+	g_d3dpp.EnableAutoDepthStencil = TRUE;
+	g_d3dpp.AutoDepthStencilFormat = D3DFMT_D16;
+	g_d3dpp.PresentationInterval = D3DPRESENT_INTERVAL_ONE;
+
+	if (g_pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hWnd,
+		D3DCREATE_HARDWARE_VERTEXPROCESSING,
+		&g_d3dpp, &g_pd3dDevice) < 0)
+		return false;
+
+	return true;
+}
+
+void CleanupDeviceD3D()
+{
+	if (g_pd3dDevice) { g_pd3dDevice->Release(); g_pd3dDevice = NULL; }
+	if (g_pD3D) { g_pD3D->Release(); g_pD3D = NULL; }
+}
+
+void ResetDevice()
+{
+	ImGui_ImplDX9_InvalidateDeviceObjects();
+	g_pd3dDevice->Reset(&g_d3dpp);
+	ImGui_ImplDX9_CreateDeviceObjects();
+}
+
+void GuiThread()
+{
+	WNDCLASSEX wc = { sizeof(WNDCLASSEX), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(NULL), NULL, NULL, NULL, NULL, _T("ImGuiExample"), NULL };
+	RegisterClassEx(&wc);
+	HWND hwnd = CreateWindow(wc.lpszClassName, u8"Gproxy 2.1 by Thái Sơn", WS_OVERLAPPEDWINDOW, 100, 100, 200, 200, NULL, NULL, wc.hInstance, NULL);
+
+	if (!CreateDeviceD3D(hwnd))
+	{
+		CleanupDeviceD3D();
+		UnregisterClass(wc.lpszClassName, wc.hInstance);
+		return;
+	}
+
+	ShowWindow(hwnd, SW_SHOWDEFAULT);
+	UpdateWindow(hwnd);
+
+	IMGUI_CHECKVERSION();
+	ImGui::CreateContext();
+	ImGuiIO& io = ImGui::GetIO(); (void)io;
+
+	ImGui::StyleColorsDark();
+
+	ImGui_ImplWin32_Init(hwnd);
+	ImGui_ImplDX9_Init(g_pd3dDevice);
+
+	io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\tahoma.ttf", 18.0f, nullptr, io.Fonts->GetGlyphRangesVietnamese());
+
+	bool done = false;
+	while (!done)
+	{
+		MSG msg;
+		while (PeekMessage(&msg, NULL, 0U, 0U, PM_REMOVE))
+		{
+			TranslateMessage(&msg);
+			DispatchMessage(&msg);
+			if (msg.message == WM_QUIT)
+				done = true;
+		}
+		if (done) break;
+
+		ImGui_ImplDX9_NewFrame();
+		ImGui_ImplWin32_NewFrame();
+		ImGui::NewFrame();
+
+		ImGui::Begin("Tuỳ chỉnh", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
+
+		if (ImGui::Button("Làm mới danh sách trò chơi"))
+		{
+			gGProxy->m_BNET->QueueGetGameList(0xFF);
+			CONSOLE_Print(u8"[BNET] Làm mới danh sách trò chơi", dye_light_purple);
+		}
+
+		ImGui::End();
+
+		ImGui::EndFrame();
+		g_pd3dDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
+		g_pd3dDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
+		g_pd3dDevice->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
+		g_pd3dDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_RGBA(114, 144, 154, 255), 1.0f, 0);
+		if (g_pd3dDevice->BeginScene() >= 0)
+		{
+			ImGui::Render();
+			ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
+			g_pd3dDevice->EndScene();
+		}
+		HRESULT result = g_pd3dDevice->Present(NULL, NULL, NULL, NULL);
+		if (result == D3DERR_DEVICELOST && g_pd3dDevice->TestCooperativeLevel() == D3DERR_DEVICENOTRESET)
+			ResetDevice();
+	}
+
+	ImGui_ImplDX9_Shutdown();
+	ImGui_ImplWin32_Shutdown();
+	ImGui::DestroyContext();
+	CleanupDeviceD3D();
+	DestroyWindow(hwnd);
+	UnregisterClass(wc.lpszClassName, wc.hInstance);
+}
+
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
+LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+	if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
+		return true;
+	switch (msg)
+	{
+	case WM_SIZE:
+		if (g_pd3dDevice != NULL && wParam != SIZE_MINIMIZED)
+		{
+			g_d3dpp.BackBufferWidth = LOWORD(lParam);
+			g_d3dpp.BackBufferHeight = HIWORD(lParam);
+			ResetDevice();
+		}
+		return 0;
+	case WM_DESTROY:
+		PostQuitMessage(0);
+		return 0;
+	}
+	return DefWindowProc(hWnd, msg, wParam, lParam);
 }

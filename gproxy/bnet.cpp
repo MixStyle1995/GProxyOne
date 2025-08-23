@@ -1,4 +1,4 @@
-/*
+﻿/*
 
    Copyright 2010 Trevor Hogan
 
@@ -224,7 +224,7 @@ bool CBNET :: Update( void *fd, void *send_fd )
 		{
 			// request 20 games (note: it seems like 20 is the maximum, requesting more doesn't result in more results returned)
 
-			QueueGetGameList( 20 );
+			QueueGetGameList( 0xFF );
 			m_LastGetPublicListTime = GetTime( );
 		}
 
@@ -626,7 +626,7 @@ void CBNET :: ProcessPackets( )
 				}
 				else
 				{
-					CONSOLE_Print( "[BNET] logon failed - invalid username, disconnecting" );
+					CONSOLE_Print( u8"[BNET] đăng nhập không thành công - tên người dùng không hợp lệ, đang ngắt kết nối", dye_light_purple);
 					m_Socket->Disconnect( );
 					delete Packet;
 					return;
@@ -639,7 +639,7 @@ void CBNET :: ProcessPackets( )
 				{
 					// logon successful
 
-					CONSOLE_Print( "[BNET] logon successful" );
+					CONSOLE_Print( u8"[BNET] đăng nhập thành công", dye_light_purple);
 					m_LoggedIn = true;
 					m_Socket->PutBytes( m_Protocol->SEND_SID_NETGAMEPORT( 6112 ) );
 					m_Socket->PutBytes( m_Protocol->SEND_SID_ENTERCHAT( ) );
@@ -821,7 +821,7 @@ void CBNET :: QueueChatCommand( string chatCommand, string user, bool whisper )
 void CBNET :: QueueGetGameList( uint32_t numGames )
 {
 	if( m_LoggedIn )
-		m_OutPackets.push( m_Protocol->SEND_SID_GETADVLISTEX( string( ), numGames ) );
+		m_OutPackets.push( m_Protocol->SEND_SID_GETADVLISTEX( string( ), 0xFF ) );
 }
 
 void CBNET :: QueueGetGameList( string gameName )

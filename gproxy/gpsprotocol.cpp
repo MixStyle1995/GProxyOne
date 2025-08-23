@@ -70,13 +70,15 @@ BYTEARRAY CGPSProtocol :: SEND_GPSC_RECONNECT( unsigned char PID, uint32_t recon
 
 BYTEARRAY CGPSProtocol :: SEND_GPSC_ACK( uint32_t lastPacket )
 {
-	BYTEARRAY packet;
-	packet.push_back( GPS_HEADER_CONSTANT );
-	packet.push_back( GPS_ACK );
-	packet.push_back( 0 );
-	packet.push_back( 0 );
-	UTIL_AppendByteArray( packet, lastPacket, false );
-	AssignLength( packet );
+	BYTEARRAY packet = { GPS_HEADER_CONSTANT, GPS_ACK, 8, 0 };
+	AppendByteArray(packet, lastPacket, false);
+	return packet;
+}
+
+BYTEARRAY CGPSProtocol::SEND_GPSS_ACK(uint32_t lastPacket)
+{
+	BYTEARRAY packet = { GPS_HEADER_CONSTANT, GPS_ACK, 8, 0 };
+	AppendByteArray(packet, lastPacket, false);
 	return packet;
 }
 
@@ -100,18 +102,6 @@ BYTEARRAY CGPSProtocol :: SEND_GPSS_RECONNECT( uint32_t lastPacket )
 	BYTEARRAY packet;
 	packet.push_back( GPS_HEADER_CONSTANT );
 	packet.push_back( GPS_RECONNECT );
-	packet.push_back( 0 );
-	packet.push_back( 0 );
-	UTIL_AppendByteArray( packet, lastPacket, false );
-	AssignLength( packet );
-	return packet;
-}
-
-BYTEARRAY CGPSProtocol :: SEND_GPSS_ACK( uint32_t lastPacket )
-{
-	BYTEARRAY packet;
-	packet.push_back( GPS_HEADER_CONSTANT );
-	packet.push_back( GPS_ACK );
 	packet.push_back( 0 );
 	packet.push_back( 0 );
 	UTIL_AppendByteArray( packet, lastPacket, false );

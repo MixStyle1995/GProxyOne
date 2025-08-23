@@ -42,6 +42,41 @@ using namespace std;
 
 typedef vector<unsigned char> BYTEARRAY;
 
+#define dye_black			0
+#define dye_blue			1
+#define dye_green			2
+#define dye_aqua			3
+#define dye_red				4
+#define dye_purple			5
+#define dye_yellow			6
+#define dye_white			7
+#define dye_grey			8
+#define dye_light_blue		9
+#define dye_light_green		10
+#define dye_light_aqua		11
+#define dye_light_red		12
+#define dye_light_purple	13
+#define dye_light_yellow	14
+#define dye_bright_white	15
+
+extern uint32_t War3Version;
+
+template<typename T>
+void removeSubstrs(basic_string<T>& s, const basic_string<T>& p, const basic_string<T>& r)
+{
+	basic_string<T>::size_type n = p.length();
+	for (basic_string<T>::size_type i = s.find(p); i != basic_string<T>::npos; i = s.find(p))
+		s.replace(i, n, r);
+}
+
+template<typename T>
+void removeSubstrs(basic_string<T>& s, const basic_string<T>& p)
+{
+	basic_string<T>::size_type n = p.length();
+	for (basic_string<T>::size_type i = s.find(p); i != basic_string<T>::npos; i = s.find(p))
+		s.erase(i, n);
+}
+
 // time
 
 uint32_t GetTime( );		// seconds
@@ -58,18 +93,16 @@ uint32_t GetTicks( );		// milliseconds
 #undef FD_SETSIZE
 #define FD_SETSIZE 512
 
-extern uint32_t War3Version;
-
 // output
 
 void LOG_Print( string message );
-void CONSOLE_Print( string message, int color = 0, bool log = true );
-void CONSOLE_PrintNoCRLF( string message, int color = 0, bool log = true );
+void CONSOLE_Print( string message, int color = 0, bool log = true, int tsline = 0);
+void CONSOLE_PrintNoCRLF( string message, int color = 0, bool log = true, int tsline = 0);
 void CONSOLE_ChangeChannel( string channel );
 void CONSOLE_AddChannelUser( string name );
 void CONSOLE_RemoveChannelUser( string name );
 void CONSOLE_RemoveChannelUsers( );
-void CONSOLE_Draw( );
+void CONSOLE_Draw(int tsline = 0);
 void CONSOLE_Resize( );
 void Process_Command( );
 
