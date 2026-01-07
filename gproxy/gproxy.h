@@ -37,6 +37,7 @@
 #include <set>
 #include <string>
 #include <vector>
+#include <mutex>
 
 using namespace std;
 
@@ -59,7 +60,7 @@ typedef vector<unsigned char> BYTEARRAY;
 #define dye_light_yellow	14
 #define dye_bright_white	15
 
-extern uint32_t War3Version;
+#include "config.h"
 
 template<typename T>
 void removeSubstrs(basic_string<T>& s, const basic_string<T>& p, const basic_string<T>& r)
@@ -88,6 +89,17 @@ uint32_t GetTicks( );		// milliseconds
  #define MILLISLEEP( x ) usleep( ( x ) * 1000 )
 #endif
 
+struct ColoredSegment
+{
+	wstring text;
+	int color_pair;
+};
+
+struct ColoredLine
+{
+	vector<ColoredSegment> segments;
+};
+
 // network
 
 #undef FD_SETSIZE
@@ -96,8 +108,8 @@ uint32_t GetTicks( );		// milliseconds
 // output
 
 void LOG_Print( string message );
-void CONSOLE_Print( string message, int color = 0, bool log = true, int tsline = 0);
-void CONSOLE_PrintNoCRLF( string message, int color = 0, bool log = true, int tsline = 0);
+void CONSOLE_Print( string message, int color = dye_white, bool log = true, int tsline = 0);
+void CONSOLE_PrintNoCRLF( string message, int color = dye_white, bool log = true, int tsline = 0);
 void CONSOLE_ChangeChannel( string channel );
 void CONSOLE_AddChannelUser( string name );
 void CONSOLE_RemoveChannelUser( string name );
@@ -213,5 +225,16 @@ public:
 	void ReloadConfig ();
 	void UDPCommands( string Message );
 };
+
+extern uint32_t War3Version;
+extern CConfig CFG;
+extern CGProxy* gGProxy;
+extern bool gRestart;
+extern string gInputBuffer;
+
+
+// ImGui thread management
+extern std::thread* g_ImGuiThread;
+extern CGProxy* gGProxy;
 
 #endif

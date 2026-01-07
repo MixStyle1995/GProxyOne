@@ -14,7 +14,7 @@
     <ProjectGuid>{74F93580-237B-443F-AD6E-A4412EDB5BF7}</ProjectGuid>
     <RootNamespace>gproxy</RootNamespace>
     <Keyword>Win32Proj</Keyword>
-    <WindowsTargetPlatformVersion>10.0.19041.0</WindowsTargetPlatformVersion>
+    <WindowsTargetPlatformVersion>10.0.22621.0</WindowsTargetPlatformVersion>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.Default.props" />
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'" Label="Configuration">
@@ -85,6 +85,7 @@
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <WholeProgramOptimization>false</WholeProgramOptimization>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
+      <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
     </ClCompile>
     <Link>
       <AdditionalDependencies>ws2_32.lib;winmm.lib;pdcurses.lib;BNCSUtil.lib;dnssd.lib;%(AdditionalDependencies)</AdditionalDependencies>
@@ -115,19 +116,12 @@
     <ClCompile Include="config.cpp" />
     <ClCompile Include="gameprotocol.cpp" />
     <ClCompile Include="gproxy.cpp" />
+    <ClCompile Include="gproxy_imgui.cpp" />
     <ClCompile Include="gpsprotocol.cpp" />
     <ClCompile Include="socket.cpp" />
     <ClCompile Include="util.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="..\imgui\backends\imgui_impl_dx9.h" />
-    <ClInclude Include="..\imgui\backends\imgui_impl_win32.h" />
-    <ClInclude Include="..\imgui\imconfig.h" />
-    <ClInclude Include="..\imgui\imgui.h" />
-    <ClInclude Include="..\imgui\imgui_internal.h" />
-    <ClInclude Include="..\imgui\imstb_rectpack.h" />
-    <ClInclude Include="..\imgui\imstb_textedit.h" />
-    <ClInclude Include="..\imgui\imstb_truetype.h" />
     <ClInclude Include="bncsutilinterface.h" />
     <ClInclude Include="bnet.h" />
     <ClInclude Include="bnetprotocol.h" />
@@ -136,10 +130,13 @@
     <ClInclude Include="config.h" />
     <ClInclude Include="gameprotocol.h" />
     <ClInclude Include="gproxy.h" />
+    <ClInclude Include="gproxy_imgui.h" />
     <ClInclude Include="gpsprotocol.h" />
+    <ClInclude Include="Obuscate.hpp" />
     <ClInclude Include="resource.h" />
     <ClInclude Include="socket.h" />
     <ClInclude Include="util.h" />
+    <ClInclude Include="util_imgui.h" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\bncsutil\vc8_build\BNCSutil.vcxproj">

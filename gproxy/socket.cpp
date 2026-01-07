@@ -16,6 +16,10 @@
 
 */
 
+#ifdef bind
+#undef bind
+#endif
+
 #include "gproxy.h"
 #include "util.h"
 #include "socket.h"
@@ -378,7 +382,8 @@ void CTCPClient :: Connect( string localaddress, string address, uint16_t port )
 
 		LocalSIN.sin_port = htons( 0 );
 
-		if( bind( m_Socket, (struct sockaddr *)&LocalSIN, sizeof( LocalSIN ) ) == SOCKET_ERROR )
+		int bindResult = ::bind(m_Socket, (sockaddr*)&LocalSIN, sizeof(LocalSIN));
+		if (bindResult == SOCKET_ERROR)
 		{
 			m_HasError = true;
 			m_Error = GetLastError( );
@@ -491,7 +496,8 @@ bool CTCPServer :: Listen( string address, uint16_t port )
 
 	m_SIN.sin_port = htons( port );
 
-	if( bind( m_Socket, (struct sockaddr *)&m_SIN, sizeof( m_SIN ) ) == SOCKET_ERROR )
+	int bindResult = ::bind(m_Socket, (sockaddr*)&m_SIN, sizeof(m_SIN));
+	if (bindResult == SOCKET_ERROR)
 	{
 		m_HasError = true;
 		m_Error = GetLastError( );
@@ -692,7 +698,8 @@ bool CUDPServer :: Bind( struct sockaddr_in sin )
 
 	m_SIN = sin;
 
-	if( bind( m_Socket, (struct sockaddr *)&m_SIN, sizeof( m_SIN ) ) == SOCKET_ERROR )
+	int bindResult = ::bind(m_Socket, (sockaddr*)&m_SIN, sizeof(m_SIN));
+	if (bindResult == SOCKET_ERROR)
 	{
 		m_HasError = true;
 		m_Error = GetLastError( );
@@ -735,9 +742,9 @@ void CUDPServer :: RecvFrom( fd_set *fd, struct sockaddr_in *sin, string *messag
 	{
 		// data is waiting, receive it
 
-		char buffer[1024];
+		char buffer[4096] = {};
 
-		int c = recvfrom( m_Socket, buffer, 1024, 0, (struct sockaddr *)sin, &AddrLen );
+		int c = recvfrom( m_Socket, buffer, 4096, 0, (struct sockaddr *)sin, &AddrLen );
 		if( c == SOCKET_ERROR && GetLastError( ) != EWOULDBLOCK )
 		{
 			// receive error

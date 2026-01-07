@@ -72,67 +72,55 @@
     <ClCompile Include="..\imgui\backends\imgui_impl_dx9.cpp">
       <Filter>ImGUI</Filter>
     </ClCompile>
+    <ClCompile Include="gproxy_imgui.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="bncsutilinterface.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="bnet.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="bnetprotocol.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="commandpacket.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="config.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="gameprotocol.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="gproxy.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="gpsprotocol.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="socket.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="util.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
     <ClInclude Include="CMDNSScanner.h">
       <Filter>Source Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\imgui\imgui_internal.h">
-      <Filter>ImGUI</Filter>
+    <ClInclude Include="gproxy_imgui.h">
+      <Filter>Source Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\imgui\imstb_rectpack.h">
-      <Filter>ImGUI</Filter>
+    <ClInclude Include="util_imgui.h">
+      <Filter>Source Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\imgui\imstb_textedit.h">
-      <Filter>ImGUI</Filter>
+    <ClInclude Include="bncsutilinterface.h">
+      <Filter>Source Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\imgui\imstb_truetype.h">
-      <Filter>ImGUI</Filter>
+    <ClInclude Include="bnet.h">
+      <Filter>Source Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\imgui\imconfig.h">
-      <Filter>ImGUI</Filter>
+    <ClInclude Include="bnetprotocol.h">
+      <Filter>Source Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\imgui\imgui.h">
-      <Filter>ImGUI</Filter>
+    <ClInclude Include="commandpacket.h">
+      <Filter>Source Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\imgui\backends\imgui_impl_win32.h">
-      <Filter>ImGUI</Filter>
+    <ClInclude Include="config.h">
+      <Filter>Source Files</Filter>
     </ClInclude>
-    <ClInclude Include="..\imgui\backends\imgui_impl_dx9.h">
-      <Filter>ImGUI</Filter>
+    <ClInclude Include="gameprotocol.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="gproxy.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="gpsprotocol.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Obuscate.hpp">
+      <Filter>Source Files</Filter>
     </ClInclude>
     <ClInclude Include="resource.h">
-      <Filter>Header Files</Filter>
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="socket.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="util.h">
+      <Filter>Source Files</Filter>
     </ClInclude>
   </ItemGroup>
 </Project>

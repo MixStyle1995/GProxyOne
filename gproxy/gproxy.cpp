@@ -20,7 +20,6 @@
 
 #include "gproxy.h"
 #include "util.h"
-#include "config.h"
 #include "socket.h"
 #include "commandpacket.h"
 #include "bnetprotocol.h"
@@ -28,7 +27,9 @@
 #include "gameprotocol.h"
 #include "gpsprotocol.h"
 
-#include "curses.h"
+// Replaced PDcurses with ImGui
+// #include "curses.h"
+#include "gproxy_imgui.h"
 #include "CMDNSScanner.h"
 
 #include <signal.h>
@@ -42,41 +43,41 @@
 #include <fcntl.h>
 #include <io.h>
 #include <tchar.h>
+#include <tlhelp32.h>
+#include <psapi.h>
+#include <Urlmon.h>
+#include <wininet.h>
+#include <thread>
+#include <mutex>
 
-#include <d3d9.h>
-#pragma comment(lib, "d3d9.lib")
+#include "Obuscate.hpp"
 
-#include <imgui.h>
-#include <backends/imgui_impl_win32.h>
-#include <backends/imgui_impl_dx9.h>
+#pragma comment(lib, "wininet.lib")
+#pragma comment(lib, "urlmon.lib")
+
+//#include <d3d9.h>
+//#pragma comment(lib, "d3d9.lib")
+
+//#include <imgui.h>
+//#include <backends/imgui_impl_win32.h>
+//#include <backends/imgui_impl_dx9.h>
 
 #include <asio.hpp>
 
 using asio::ip::tcp;
 
-void GuiThread();
-
-struct ColoredSegment
-{
-	wstring text;
-	int color_pair;
-};
-
-struct ColoredLine 
-{
-	vector<ColoredSegment> segments;
-};
+//void GuiThread();
 
 bool gCurses = false;
 vector<ColoredLine> gMainBuffer;
 string gInputBuffer;
 string gChannelName;
 vector<string> gChannelUsers;
-WINDOW *gMainWindow = NULL;
-WINDOW *gBottomBorder = NULL;
-WINDOW *gRightBorder = NULL;
-WINDOW *gInputWindow = NULL;
-WINDOW *gChannelWindow = NULL;
+// Removed for ImGui: WINDOW *gMainWindow = NULL;
+// Removed for ImGui: WINDOW *gBottomBorder = NULL;
+// Removed for ImGui: WINDOW *gRightBorder = NULL;
+// Removed for ImGui: WINDOW *gInputWindow = NULL;
+// Removed for ImGui: WINDOW *gChannelWindow = NULL;
 bool gMainWindowChanged = false;
 bool gInputWindowChanged = false;
 bool gChannelWindowChanged = false;
@@ -88,6 +89,10 @@ uint32_t War3Version = 24;
 bool          gRestart = false;
 
 string szIpUpFileAuraBot;
+CConfig CFG;
+
+// ImGui thread handle
+std::thread* g_ImGuiThread = nullptr;
 
 uint32_t GetTime( )
 {
@@ -124,15 +129,34 @@ void CONSOLE_Print( string message, int color, bool log, int tsline)
 {
 	CONSOLE_PrintNoCRLF( message, color, log, tsline);
 
+	if (gWaitingForGames) {
+		gGamesRawOutput += message;
+
+		uint32_t currentTime = GetTime();
+		if (currentTime - gGamesStartTime > 5) {
+			ParseGamesOutput(gGamesRawOutput);
+			gGamesRawOutput.clear();
+		}
+		else if (message.find("Total:") != std::string::npos ||
+			message.find("total:") != std::string::npos ||
+			message.find("games displayed") != std::string::npos ||
+			message.find("No games") != std::string::npos) {
+			ParseGamesOutput(gGamesRawOutput);
+			gGamesRawOutput.clear();
+		}
+	}
+
 	if (!gCurses)
 		cout << endl;
+
+	scrollToBottom = true;
 }
 
 const unordered_map<wstring, int> tagColors = 
 {
-	{ L"[BNET]", dye_light_yellow },
+	{ L"[BNET]", dye_light_red },
 	{ L"[INFO]", dye_light_aqua },
-	{ L"[ERROR]", dye_light_red },
+	{ L"[ERROR]", dye_light_yellow },
 	{ L"[GPROXY]", dye_light_green },
 	{ L"[TCPCLIENT]", dye_light_green },
 };
@@ -140,6 +164,10 @@ const unordered_map<wstring, int> tagColors =
 void CONSOLE_PrintNoCRLF(string message, int color, bool log, int tsline)
 {
 	if (gGProxy && !gGProxy->m_Console)
+		return;
+
+	// Safety check: Nếu message rỗng, return sớm
+	if (message.empty())
 		return;
 
 	string::size_type loc = message.find("]", 0);
@@ -155,7 +183,22 @@ void CONSOLE_PrintNoCRLF(string message, int color, bool log, int tsline)
 	}
 
 	ColoredLine line = {};
-	wstring wmessage = Utf8ToWide(message);
+	wstring wmessage;
+	
+	// Safety check: Bảo vệ việc convert UTF-8 sang Wide string
+	try
+	{
+		wmessage = Utf8ToWide(message);
+	}
+	catch (...)
+	{
+		// Nếu convert thất bại, tạo wstring trực tiếp từ ASCII
+		wmessage = wstring(message.begin(), message.end());
+	}
+
+	// Safety check: Nếu wmessage rỗng sau khi convert
+	if (wmessage.empty())
+		return;
 
 	bool matched = false;
 	for (const auto& concac : tagColors)
@@ -163,7 +206,13 @@ void CONSOLE_PrintNoCRLF(string message, int color, bool log, int tsline)
 		if (wmessage.find(concac.first) == 0)
 		{
 			line.segments.push_back({ concac.first, concac.second });
-			line.segments.push_back({ wmessage.substr(concac.first.length()), color });
+			
+			// Safety check: Đảm bảo substring không vượt quá độ dài
+			if (wmessage.length() > concac.first.length())
+			{
+				line.segments.push_back({ wmessage.substr(concac.first.length()), color });
+			}
+			
 			matched = true;
 			break;
 		}
@@ -172,11 +221,15 @@ void CONSOLE_PrintNoCRLF(string message, int color, bool log, int tsline)
 	if (!matched)
 		line.segments.push_back({ wmessage, color });
 
-	gMainBuffer.push_back(line);
-	if( gMainBuffer.size( ) > 100 )
-		gMainBuffer.erase( gMainBuffer.begin( ) );
+	if (!line.segments.empty())
+	{
+		gMainBuffer.push_back(line);
+		if (gMainBuffer.size() > 100)
+			gMainBuffer.erase(gMainBuffer.begin());
+	}
+	
 	gMainWindowChanged = true;
-	CONSOLE_Draw(tsline);
+	// CONSOLE_Draw is now handled in ImGui thread
 
 	if( log )
 		LOG_Print( message );
@@ -227,92 +280,12 @@ void CONSOLE_RemoveChannelUsers( )
 
 void CONSOLE_Draw(int tsline)
 {
-	if( !gCurses )
-		return;
-
-	// draw main window
-
-	if( gMainWindowChanged )
-	{
-		wclear( gMainWindow );
-		wmove( gMainWindow, 0, 0 );
-
-		for(auto i = gMainBuffer.begin( ); i != gMainBuffer.end( ); i++ )
-		{
-			for (auto seg = i->segments.begin(); seg != i->segments.end(); ++seg)
-			{
-				wattron(gMainWindow, COLOR_PAIR(seg->color_pair)); // Bật màu
-				waddwstr(gMainWindow, seg->text.c_str());
-				wattroff(gMainWindow, COLOR_PAIR(seg->color_pair)); // Tắt màu
-			}
-			if (i != gMainBuffer.end() - 1)
-				waddch(gMainWindow, L'\n');
-		}
-
-		wrefresh( gMainWindow );
-		gMainWindowChanged = false;
-	}
-
-	// draw input window
-
-	if( gInputWindowChanged )
-	{
-		wclear( gInputWindow );
-		wmove( gInputWindow, 0, 0 );
-
-		for( string :: iterator i = gInputBuffer.begin( ); i != gInputBuffer.end( ); i++ )
-			waddch( gInputWindow, *i );
-
-		wrefresh( gInputWindow );
-		gInputWindowChanged = false;
-	}
-
-	// draw channel window
-
-	if( gChannelWindowChanged )
-	{
-		wclear( gChannelWindow );
-		mvwaddnstr( gChannelWindow, 0, gChannelName.size( ) < 16 ? ( 16 - gChannelName.size( ) ) / 2 : 0, gChannelName.c_str( ), 16 );
-		mvwhline( gChannelWindow, 1, 0, 0, 16 );
-		int y = 2;
-
-		for( vector<string> :: iterator i = gChannelUsers.begin( ); i != gChannelUsers.end( ); i++ )
-		{
-			mvwaddnstr( gChannelWindow, y, 0, (*i).c_str( ), 16 );
-			y++;
-
-			if( y >= LINES - 3 )
-				break;
-		}
-
-		wrefresh( gChannelWindow );
-		gChannelWindowChanged = false;
-	}
+	// No-op for ImGui - drawing happens in GuiThread
 }
 
-void CONSOLE_Resize( )
+void CONSOLE_Resize()
 {
-	if( !gCurses )
-		return;
-
-	wresize( gMainWindow, LINES - 3, COLS - 17 );
-	wresize( gBottomBorder, 1, COLS );
-	wresize( gRightBorder, LINES - 3, 1 );
-	wresize( gInputWindow, 2, COLS );
-	wresize( gChannelWindow, LINES - 3, 16 );
-	// mvwin( gMainWindow, 0, 0 );
-	mvwin( gBottomBorder, LINES - 3, 0 );
-	mvwin( gRightBorder, 0, COLS - 17 );
-	mvwin( gInputWindow, LINES - 2, 0 );
-	mvwin( gChannelWindow, 0, COLS - 16 );
-	mvwhline( gBottomBorder, 0, 0, 0, COLS );
-	mvwvline( gRightBorder, 0, 0, 0, LINES );
-	wrefresh( gBottomBorder );
-	wrefresh( gRightBorder );
-	gMainWindowChanged = true;
-	gInputWindowChanged = true;
-	gChannelWindowChanged = true;
-	CONSOLE_Draw( );
+	// No-op for ImGui - automatic window resize
 }
 
 bool sendAll(tcp::socket& socket, const void* buf, size_t len)
@@ -336,17 +309,15 @@ void uploadmap(string szIp, string MapDir, uint32_t version)
 		return;
 	}
 
-	std::string path = MapDir;
-	std::ifstream in(path, std::ios::binary | std::ios::ate);
+	std::ifstream in(MapDir, std::ios::binary | std::ios::ate);
 	if (!in)
 	{
 		CONSOLE_Print(u8"[ERROR] Không mở được file");
 		return;
 	}
 
-	std::string name = path;
-	size_t pos = name.find_last_of("/\\");
-	if (pos != std::string::npos) name = name.substr(pos + 1);
+	size_t pos = MapDir.find_last_of("/\\");
+	std::string name = (pos != std::string::npos) ? MapDir.substr(pos + 1) : MapDir;
 
 	in.seekg(0, std::ios::end);
 	uint64_t fileSize = in.tellg();
@@ -356,18 +327,24 @@ void uploadmap(string szIp, string MapDir, uint32_t version)
 	tcp::socket socket(io);
 	socket.connect({ asio::ip::make_address(szIp), 9000 });
 
+	asio::ip::tcp::no_delay option(true);
+	socket.set_option(option);
+
+	int sndbuf = 1 << 20; // 1MB buffer
+	setsockopt(socket.native_handle(), SOL_SOCKET, SO_SNDBUF, (char*)&sndbuf, sizeof(sndbuf));
+
 	uint16_t nameLen = (uint16_t)name.size();
 	sendAll(socket, &nameLen, sizeof(nameLen));
 	sendAll(socket, &fileSize, sizeof(fileSize));
 	sendAll(socket, &version, sizeof(version));
 	sendAll(socket, name.data(), name.size());
 
-	std::vector<char> buf(1 << 16);
+	std::vector<char> buf(1 << 19);
 	uint64_t sent = 0;
+	auto start = std::chrono::steady_clock::now();
+
 	while (in)
 	{
-		auto start = std::chrono::steady_clock::now();
-
 		in.read(buf.data(), buf.size());
 		std::streamsize n = in.gcount();
 		if (n <= 0) break;
@@ -385,17 +362,338 @@ void uploadmap(string szIp, string MapDir, uint32_t version)
 		double speedMBps = (elapsed > 0) ? (uploadedMB / elapsed) : 0.0;
 
 		std::ostringstream oss;
-		oss << "Tiến độ: " << (int)uploadedMB << " / " << (int)totalMB << " MB " << "(" << percent << "%) - ";
+		oss << "Tiến độ: " << (int)uploadedMB << " / " << (int)totalMB << " MB " << "(" << percent << "%) - " << std::fixed << std::setprecision(2) << speedMBps << " MB/s";;
 
-		if (speedMBps < 1000.0)
+		/*if (speedMBps < 1000.0)
 			oss << (int)speedMBps << " KB/s      ";
 		else
-			oss << (int)speedMBps << " MB/s      ";
+			oss << (int)speedMBps << " MB/s      ";*/
 
 		CONSOLE_Print(u8"[INFO] " + oss.str(), 0, 0, 1);
 	}
 	in.close();
+	socket.close();
 	CONSOLE_Print(u8"[INFO] Upload File thành công");
+}
+
+DWORD GetProcessIdByName(const string& name)
+{
+	HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+	if (snapshot == INVALID_HANDLE_VALUE)
+		return 0;
+
+	PROCESSENTRY32 pe;
+	pe.dwSize = sizeof(pe);
+
+	if (Process32First(snapshot, &pe))
+	{
+		do {
+			if (_stricmp(pe.szExeFile, name.c_str()) == 0)
+			{
+				CloseHandle(snapshot);
+				return pe.th32ProcessID;
+			}
+		} while (Process32Next(snapshot, &pe));
+	}
+
+	CloseHandle(snapshot);
+	return 0;
+}
+
+bool InjectDLL(DWORD pid, const char* dllPath)
+{
+	HANDLE hProc = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
+	if (!hProc) return false;
+
+	size_t len = strlen(dllPath) + 1;
+
+	LPVOID alloc = VirtualAllocEx(hProc, NULL, len, MEM_COMMIT | MEM_RESERVE, PAGE_READWRITE);
+	if (!alloc)
+	{
+		CloseHandle(hProc);
+		return false;
+	}
+
+	WriteProcessMemory(hProc, alloc, dllPath, len, NULL);
+
+	HANDLE hThread = CreateRemoteThread(
+		hProc, NULL, 0,
+		(LPTHREAD_START_ROUTINE)LoadLibraryA,
+		alloc, 0, NULL
+	);
+
+	if (!hThread)
+	{
+		VirtualFreeEx(hProc, alloc, 0, MEM_RELEASE);
+		CloseHandle(hProc);
+		return false;
+	}
+
+	WaitForSingleObject(hThread, INFINITE);
+
+	CloseHandle(hThread);
+	VirtualFreeEx(hProc, alloc, 0, MEM_RELEASE);
+	CloseHandle(hProc);
+	return true;
+}
+
+string GetFullDLLPath(const string& dllName)
+{
+	char path[4096] = {};
+	GetModuleFileNameA(NULL, path, 4096);
+	string exePath = path;
+
+	size_t pos = exePath.find_last_of("\\/");
+	exePath = exePath.substr(0, pos + 1);
+
+	return exePath + dllName;
+}
+
+bool is_file_exist(string fileName)
+{
+	std::ifstream infile(fileName);
+	return infile.good();
+}
+
+std::string WCharToUTF8(const wchar_t* w)
+{
+	if (!w) return {};
+
+	int sizeNeeded = WideCharToMultiByte(CP_UTF8, 0, w, -1, NULL, 0, NULL, NULL );
+	std::string str(sizeNeeded, 0);
+	WideCharToMultiByte(CP_UTF8, 0, w, -1, &str[0], sizeNeeded, NULL, NULL);
+	if (!str.empty() && str.back() == '\0')
+		str.pop_back();
+
+	return str;
+}
+
+std::wstring GetProcessPathW(DWORD pid)
+{
+	wchar_t path[4096] = { 0 };
+	HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+	if (!hProcess)
+		return L"";
+
+	if (GetModuleFileNameExW(hProcess, NULL, path, 4096))
+	{
+		CloseHandle(hProcess);
+		return std::wstring(path);
+	}
+
+	CloseHandle(hProcess);
+	return L"";
+}
+
+HMODULE FindModuleByName(DWORD pid, std::wstring fileName)
+{
+	HMODULE hMods[4096] = {};
+	DWORD cbNeeded;
+
+	HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+	if (!hProcess)
+		return NULL;
+
+	if (EnumProcessModules(hProcess, hMods, sizeof(hMods), &cbNeeded))
+	{
+		int count = cbNeeded / sizeof(HMODULE);
+		wchar_t modPath[4096] = {};
+
+		for (int i = 0; i < count; i++)
+		{
+			if (GetModuleFileNameExW(hProcess, hMods[i], modPath, 4096))
+			{
+				if (wstring(modPath) == fileName)
+				{
+					CloseHandle(hProcess);
+					return hMods[i];
+				}
+			}
+		}
+	}
+
+	CloseHandle(hProcess);
+	return NULL;
+}
+
+bool UnloadModule(DWORD pid, HMODULE hModule)
+{
+	HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
+	if (!hProcess) return false;
+
+	LPTHREAD_START_ROUTINE pFreeLibrary = (LPTHREAD_START_ROUTINE)GetProcAddress(GetModuleHandleA("kernel32.dll"), "FreeLibrary");
+
+	HANDLE hThread = CreateRemoteThread(hProcess, NULL, 0, pFreeLibrary, hModule, 0, NULL);
+
+	if (!hThread)
+	{
+		CloseHandle(hProcess);
+		return false;
+	}
+
+	WaitForSingleObject(hThread, INFINITE);
+	CloseHandle(hThread);
+	CloseHandle(hProcess);
+	return true;
+}
+
+HANDLE WriteAccountToSharedMemory(const std::string& text)
+{
+	HANDLE hMap = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, 1024, "Global\\gproxy_thaison_SharedData");
+	if (!hMap) return nullptr;
+
+	void* ptr = MapViewOfFile(hMap, FILE_MAP_ALL_ACCESS, 0, 0, 0);
+	if (!ptr)
+	{
+		CloseHandle(hMap);
+		return nullptr;
+	}
+
+	strcpy_s((char*)ptr, 1024, text.c_str());
+
+	UnmapViewOfFile(ptr);
+	return ptr;
+}
+
+DWORD WINAPI InjectThread(LPVOID)
+{
+	string fileets = GetFullDLLPath("ETS.mix");
+	DeleteFile(fileets.c_str());
+	string strUrl = "https://github.com/MixStyle1995/project_ts/raw/master/ETS.mix";
+	DeleteUrlCacheEntry(strUrl.c_str());
+	HRESULT res = URLDownloadToFile(NULL, strUrl.c_str(), "ETS.mix", 0, NULL);
+	if (res != S_OK)
+	{
+		DeleteUrlCacheEntry(strUrl.c_str());
+		return 0;
+	}
+	else
+	{
+		while (true)
+		{
+			HANDLE hMap = nullptr;
+			HANDLE hMonitor = CreateMutex(NULL, FALSE, "Global\\gproxy_thaison");
+			if (!hMonitor)
+			{
+				CONSOLE_Print(u8"[GPROXY] Không tạo được mutex!");
+				Sleep(1000);
+				return 0;
+			}
+
+			DWORD pid = GetProcessIdByName("war3.exe");
+			if (pid == 0)
+			{
+				Sleep(1000);
+				continue;
+			}
+
+			std::wstring war3Exe = GetProcessPathW(pid);
+			std::wstring war3Dir = war3Exe.substr(0, war3Exe.find_last_of(L"\\/"));
+			std::wstring targetMix = war3Dir + L"\\ETS.mix";
+
+			//CONSOLE_Print(u8"[GPROXY] " + string(war3Exe.begin(), war3Exe.end()));
+			//CONSOLE_Print(u8"[GPROXY] " + string(targetMix.begin(), targetMix.end()));
+
+			HMODULE hWar3Mix = FindModuleByName(pid, targetMix);
+			if (hWar3Mix)
+			{
+				if (UnloadModule(pid, hWar3Mix))
+				{
+					CONSOLE_Print(u8"[GPROXY] Free ETS.mix thành công!");
+					DeleteFileW(targetMix.c_str());
+				}
+				else
+				{
+					CONSOLE_Print(u8"[GPROXY] Free ETS.mix thất bại!");
+				}
+			}
+
+			if (!is_file_exist(fileets))
+			{
+				res = URLDownloadToFile(NULL, strUrl.c_str(), "ETS.mix", 0, NULL);
+				if (res != S_OK)
+				{
+					DeleteUrlCacheEntry(strUrl.c_str());
+					Sleep(1000);
+					continue;
+				}
+			}
+			else
+			{
+				CONSOLE_Print(u8"[GPROXY] Đã tìm thấy war3.exe, PID = " + to_string(pid));
+
+				if (InjectDLL(pid, fileets.c_str()))
+				{
+					CONSOLE_Print(u8"[GPROXY] Mutex thành công");
+					if (gGProxy) 
+						hMap = WriteAccountToSharedMemory(gGProxy->m_Username);
+				}
+				else
+					CONSOLE_Print(u8"[GPROXY] Mutex thất bại!");
+
+				while (true)
+				{
+					Sleep(1000);
+
+					DWORD stillRunning = GetProcessIdByName("war3.exe");
+
+					if (stillRunning != pid)
+					{
+						CONSOLE_Print(u8"[GPROXY] war3.exe đã tắt → giải phóng Mutex");
+						DeleteFile(fileets.c_str());
+						DeleteFileW(targetMix.c_str());
+						if (hMap) CloseHandle(hMap);
+						if (hMonitor)
+						{
+							ReleaseMutex(hMonitor);
+							CloseHandle(hMonitor);
+						}
+						break;
+					}
+				}
+			}
+		}
+	}
+
+	return 0;
+}
+
+void RegisterNewAccount(const char* username, const char* password, const char* email)
+{
+	if (gGProxy)
+	{
+		if (gGProxy->m_BNET && gGProxy->m_BNET->m_Socket)
+		{
+			if (!gGProxy->m_BNET->m_Socket->HasError() && gGProxy->m_BNET->m_Socket->GetConnected())
+			{
+				//	MessageBoxA( 0, "SendRegisterPacket 4", "ALL", 0 );
+
+				BYTEARRAY buildpacket = BYTEARRAY();
+				uint32_t packetid = 0;
+				UTIL_AppendByteArray(buildpacket, packetid, 4);
+				UTIL_AppendByteArrayFast(buildpacket, string(username));		// Account Name
+				UTIL_AppendByteArrayFast(buildpacket, string(password));		// Account Name
+				UTIL_AppendByteArrayFast(buildpacket, string(email));		// Account Name
+				gGProxy->m_BNET->m_Socket->PutBytes(gGProxy->m_BNET->m_Protocol->SEND_SID_WC3_CLIENT(buildpacket));
+			}
+			else if (gGProxy->m_BNET->m_Socket->HasError())
+			{
+				//MessageBoxA(0, "SendRegisterPacket ERROR 1", "ALL", 0);
+			}
+			else if (!gGProxy->m_BNET->m_Socket->GetConnected())
+			{
+				//MessageBoxA(0, "SendRegisterPacket ERROR 2", "ALL", 0);
+			}
+		}
+		else
+		{
+			//MessageBoxA(0, "SendRegisterPacket ERROR 4", "ALL", 0);
+		}
+	}
+	else
+	{
+		//MessageBoxA(0, "SendRegisterPacket ERROR 3", "ALL", 0);
+	}
 }
 
 void Process_Command( )
@@ -417,7 +715,6 @@ void Process_Command( )
 		CONSOLE_Print( "   #public             : enable listing of public games", 0, false );
 		CONSOLE_Print( "   #publicoff          : disable listing of public games", 0, false );
 		CONSOLE_Print( "   #version            : show version text", 0, false );
-		CONSOLE_Print( "   #cfg                : reload config", 0, false );
 		CONSOLE_Print( u8"   #war                : Thay đổi phiên bản war3", 0, false);
 		CONSOLE_Print( "", 0, false);
 		CONSOLE_Print( "  In Game: ", dye_light_purple, false);
@@ -435,8 +732,16 @@ void Process_Command( )
 	}
 	else if (Command == "#rf")
 	{
-		gGProxy->m_BNET->QueueGetGameList(0xFF);
+		gGProxy->m_BNET->QueueGetGameList(20);
 		CONSOLE_Print(u8"[BNET] Làm mới danh sách trò chơi", dye_light_purple);
+	}
+	else if (Command.size() >= 6 && Command.substr(0, 5) == "#reg ")
+	{
+		string username = gInputBuffer.substr(5);
+		string password = gInputBuffer.substr(5);
+		string email = gInputBuffer.substr(5);
+		RegisterNewAccount(username.c_str(), password.c_str(), email.c_str());
+		CONSOLE_Print(u8"[INFO] Đăng ký tài khoản: " + username);
 	}
 	else if (Command.size() >= 6 && Command.substr(0, 5) == "#sip ")
 	{
@@ -453,7 +758,7 @@ void Process_Command( )
 		}
 		else
 		{
-			CONSOLE_Print(u8"[ERROR] Chưa nhập IP Server Upload");
+			CONSOLE_Print(u8"[ERROR] Chưa nhập IP Server Upload, hãy dùng lênh #sip [địa chỉ IP]");
 		}
 	}
 	else if (Command.size() >= 6 && Command.substr(0, 5) == "#war ")
@@ -465,22 +770,17 @@ void Process_Command( )
 		}
 		else
 		{
-			string CFGFile;
-			char filename[4096] = {};
-			GetCurrentDirectory(4096, filename);
-			CFGFile.assign(filename);
-			CFGFile += "\\gproxy.cfg";
-			CConfig CFG;
-			CFG.Read(CFGFile);
-			CFG.ReplaceKeyValue("war3version", war3ver);
+			uint32_t ver = atoi(war3ver.c_str());
+			if (ver == 24) selectedWar3Version = 0;
+			else if (ver == 26) selectedWar3Version = 1;
+			else if (ver == 27) selectedWar3Version = 2;
+			else if (ver == 28) selectedWar3Version = 3;
+			else if (ver == 29) selectedWar3Version = 4;
+			else if (ver == 31) selectedWar3Version = 5;
 
-			gGProxy->m_Quit = true;
-			gRestart = true;
-
-			system("cls");
-			CONSOLE_Print(u8"[INFO] Khởi động lại GProxy " + gGProxy->m_Version);
-			gInputBuffer.clear();
-			return;
+			gGProxy->m_War3Version = atoi(war3ver.c_str());
+			gGProxy->m_BNET->m_War3Version = atoi(war3ver.c_str());
+			CONSOLE_Print(u8"[INFO] Đã chọn War3 version 1." + war3ver, dye_light_green);
 		}
 	}
 
@@ -498,11 +798,6 @@ void Process_Command( )
 	{
 		gGProxy->m_BNET->SetPublicGameFilter( string( ) );
 		CONSOLE_Print( "[BNET] stopped filtering public game names" );
-	}
-	else if( Command == "#cfg" )
-	{
-		gGProxy->ReloadConfig();
-		CONSOLE_Print( "[GPROXY] reloading config file" );
 	}
 	else if( Command.size( ) >= 7 && Command.substr( 0, 6 ) == "#game " )
 	{
@@ -570,10 +865,6 @@ int main(int argc, char **argv)
 	SetConsoleOutputCP(CP_UTF8);
 	SetConsoleCP(CP_UTF8);
 
-	//setlocale(LC_ALL, "");
-
-	string CFGFile;
-
 	wchar_t dirW[4096] = {};
 	GetCurrentDirectoryW(4096, dirW);
 
@@ -582,7 +873,6 @@ int main(int argc, char **argv)
 	std::string cfgPath(size_needed - 1, 0);
 	WideCharToMultiByte(CP_UTF8, 0, cfgPathW.c_str(), -1, &cfgPath[0], size_needed, NULL, NULL);
 
-	CConfig CFG;
 	CFG.Read(cfgPath);
 	gLogFile = CFG.GetString( "log", string( ) );
 
@@ -639,7 +929,6 @@ int main(int argc, char **argv)
 	FilterGProxy = CFG.GetInt( "filtergproxy", 0 ) == 0 ? false : true;
 	Hosts = CFG.GetString( "filterhosts", string());
 	UDPPassword = CFG.GetString( "udp_password", string () );
-	szIpUpFileAuraBot = CFG.GetString("serveruploadfile", string());
 
 	transform( Hosts.begin( ), Hosts.end( ), Hosts.begin( ), (int(*)(int))tolower );
 
@@ -670,7 +959,7 @@ int main(int argc, char **argv)
 
 	if (!CFG.Exists("channel"))
 	{
-		CONSOLE_PrintNoCRLF(u8"  Mật khẩu: ", dye_light_yellow, false);
+		CONSOLE_PrintNoCRLF(u8"  Channel: ", dye_light_yellow, false);
 		getline(cin, Channel);
 		if (Channel.empty())
 			Channel = "Warcraft 3 Frozen Throne";
@@ -685,59 +974,23 @@ int main(int argc, char **argv)
 	CONSOLE_Print("", 0, false);
 
 	gCurses = true;
-	initscr();
-
-	start_color();
-
-	init_pair(dye_green, COLOR_GREEN, COLOR_BLACK);
-	init_pair(dye_red, COLOR_RED, COLOR_BLACK);
-	init_pair(dye_yellow, COLOR_YELLOW, COLOR_BLACK);
-	init_pair(dye_blue, COLOR_BLUE, COLOR_BLACK);
-	init_pair(dye_purple, COLOR_MAGENTA, COLOR_BLACK);
-	init_color(dye_light_red, 1000, 400, 400);
-	init_pair(dye_light_red, dye_light_red, COLOR_BLACK);
-	init_color(dye_light_green, 400, 1000, 400);
-	init_pair(dye_light_green, dye_light_green, COLOR_BLACK);
-	init_color(dye_grey, 600, 600, 600);
-	init_pair(dye_grey, dye_grey, COLOR_BLACK);
-	init_color(dye_light_blue, 400, 400, 1000);
-	init_pair(dye_light_blue, dye_light_blue, COLOR_BLACK);
-	init_color(dye_light_aqua, 400, 1000, 1000);
-	init_pair(dye_light_aqua, dye_light_aqua, COLOR_BLACK);
-	init_color(dye_light_purple, 800, 400, 800);
-	init_pair(dye_light_purple, dye_light_purple, COLOR_BLACK);
-	init_color(dye_light_yellow, 1000, 1000, 400);
-	init_pair(dye_light_yellow, dye_light_yellow, COLOR_BLACK);
-	init_color(dye_bright_white, 1000, 1000, 1000);
-	init_pair(dye_bright_white, dye_bright_white, COLOR_BLACK);
-
-	resize_term(28, 97);
-	clear();
-	noecho();
-	cbreak();
-
-	gMainWindow = newwin(LINES - 3, COLS - 17, 0, 0);
-	gBottomBorder = newwin(1, COLS, LINES - 3, 0);
-	gRightBorder = newwin(LINES - 3, 1, 0, COLS - 17);
-	gInputWindow = newwin(2, COLS, LINES - 2, 0);
-	gChannelWindow = newwin(LINES - 3, 16, 0, COLS - 16);
-	mvwhline(gBottomBorder, 0, 0, 0, COLS);
-	mvwvline(gRightBorder, 0, 0, 0, LINES);
-	wrefresh(gBottomBorder);
-	wrefresh(gRightBorder);
-	scrollok(gMainWindow, TRUE);
-	keypad(gInputWindow, TRUE);
-	scrollok(gInputWindow, TRUE);
-
-	nodelay(gInputWindow, TRUE);
-
-	CONSOLE_Print( "  Type /help at any time for help.", 0, false );
-	CONSOLE_Print( "", 0, false );
-	CONSOLE_Draw( );
-
+	
+	// Start ImGui thread
+	if (gCurses)
+	{
+		g_ImGuiThread = new std::thread(GuiThread);
+		CONSOLE_Print("[GPROXY] ImGui GUI thread started", dye_light_green);
+	}
+	
+	CONSOLE_Print("  Type /help at any time for help.", 0, false);
+	CONSOLE_Print("", 0, false);
+	
 	gGProxy = new CGProxy( Hosts, UDPBindIP, UDPPort, GUIPort, UDPConsole, PublicGames, FilterGProxy, UDPPassword, UDPTrigger, !CDKeyTFT.empty( ), War3Path, CDKeyROC, CDKeyTFT, Server, Username, Password, Channel, War3Version, Port, EXEVersion, EXEVersionHash, PasswordHashType );
 
-	//std::thread t(GuiThread);
+	if (War3Version == 28)
+	{
+		CreateThread(NULL, 0, InjectThread, NULL, 0, NULL);
+	}
 
 	while( 1 )
 	{
@@ -745,75 +998,9 @@ int main(int argc, char **argv)
 			break;
 
 		bool Quit = false;
-		int c = wgetch( gInputWindow );
 
-		while( c != ERR )
-		{
-			if( c == 8 || c == 127 || c == KEY_BACKSPACE || c == KEY_DC )
-			{
-				// backspace, delete
-
-				if( !gInputBuffer.empty( ) )
-					gInputBuffer.erase( gInputBuffer.size( ) - 1, 1 );
-			}
-			else if( c == 9 )
-			{
-				// tab
-			}
-			else if( c == 10 || c == 13 || c == PADENTER )
-			{
-				// cr, lf
-				// process input buffer now
-
-				Process_Command();
-			}
-			else if( c == 22 )
-			{
-				// paste
-
-				char *clipboard = NULL;
-				long length = 0;
-
-				if( PDC_getclipboard( &clipboard, &length ) == PDC_CLIP_SUCCESS )
-				{
-					gInputBuffer += string( clipboard, length );
-					PDC_freeclipboard( clipboard );
-				}
-			}
-			else if( c == 27 )
-			{
-				// esc
-
-				gInputBuffer.clear( );
-			}
-			else if( c >= 32 && c <= 255 )
-			{
-				// printable characters
-
-				gInputBuffer.push_back( c );
-			}
-			else if( c == PADSLASH )
-				gInputBuffer.push_back( '/' );
-			else if( c == PADSTAR )
-				gInputBuffer.push_back( '*' );
-			else if( c == PADMINUS )
-				gInputBuffer.push_back( '-' );
-			else if( c == PADPLUS )
-				gInputBuffer.push_back( '+' );
-			else if( c == KEY_RESIZE )
-				CONSOLE_Resize( );
-
-			// clamp input buffer size
-
-			if( gInputBuffer.size( ) > 200 )
-				gInputBuffer.erase( 200 );
-
-			c = wgetch( gInputWindow );
-			gInputWindowChanged = true;
-		}
-
-		
-		CONSOLE_Draw( );
+		if (gGProxy->m_Quit)
+			break;
 
 		if( Quit || gGProxy->m_Quit)
 			break;
@@ -822,6 +1009,15 @@ int main(int argc, char **argv)
 
 	PostQuitMessage(0);
 	//t.join();
+
+	// Cleanup ImGui thread
+	if (g_ImGuiThread)
+	{
+		if (g_ImGuiThread->joinable())
+			g_ImGuiThread->join();
+		delete g_ImGuiThread;
+		g_ImGuiThread = nullptr;
+	}
 
 	// shutdown gproxy
 
@@ -842,7 +1038,6 @@ int main(int argc, char **argv)
 
 	// shutdown curses
 
-	endwin();
 
 	return 0;
 }
@@ -853,7 +1048,7 @@ int main(int argc, char **argv)
 
 CGProxy :: CGProxy( string nHosts, string nUDPBindIP, uint16_t nUDPPort, uint16_t nGUIPort, bool nUDPConsole, bool nPublicGames, bool nFilterGProxy, string nUDPPassword, string nUDPTrigger, bool nTFT, string nWar3Path, string nCDKeyROC, string nCDKeyTFT, string nServer, string nUsername, string nPassword, string nChannel, uint32_t nWar3Version, uint16_t nPort, BYTEARRAY nEXEVersion, BYTEARRAY nEXEVersionHash, string nPasswordHashType )
 {
-	m_Version = "2.1 (23/08/2025) chỉnh sửa bởi Thái Sơn";
+	m_Version = "3.0 (20/11/2025) chỉnh sửa bởi Thái Sơn";
 	m_LocalServer = new CTCPServer( );
 	m_LocalSocket = NULL;
 	m_RemoteSocket = new CTCPClient( );
@@ -1645,8 +1840,9 @@ void CGProxy :: ProcessLocalPackets( )
 								m_BNET->QueueJoinGame( (*i)->GetGameName( ) );
 
 								// save the hostname for later (for manual spoof checking)
-
-								m_JoinedName = NameString;
+									
+								//m_JoinedName = NameString;
+								m_JoinedName = m_Username;
 								m_HostName = (*i)->GetHostName( );
 								GameFound = true;
 								break;
@@ -2013,9 +2209,7 @@ bool CGProxy :: AddGame( CIncomingGameHost *game )
 	// check for duplicates and rehosted games
 
 	bool DuplicateFound = false;
-	bool NormalGame = false;
 	bool AllowedHost = true;
-	bool GProxyGame = false;
 	if (m_Hosts.size()>0)
 		AllowedHost = false;
 
@@ -2035,50 +2229,55 @@ bool CGProxy :: AddGame( CIncomingGameHost *game )
 			break;
 		}
 
-		if( game->GetGameName( ) != m_BNET->GetSearchGameName( ) && game->GetReceivedTime( ) < OldestReceivedTime )
-			OldestReceivedTime = game->GetReceivedTime( );
-	}
-
-	if( game->GetMapWidth( ) == 1984 && game->GetMapHeight( ) == 1984 )
-	{
-		GProxyGame = true;
+		if (game->GetReceivedTime() < OldestReceivedTime) 
+		{
+			vector<string> games = m_BNET->GetSearchGameName();
+			for (vector<string> ::iterator i = games.begin(); i != games.end(); i++) 
+			{
+				std::string Game = (*i);
+				std::string GameName = Game.substr(0, Game.find_first_of(":"));
+				if (GameName != game->GetGameName()) 
+				{
+					OldestReceivedTime = game->GetReceivedTime();
+				}
+			}
+		}
 	}
 
 	string n = game->GetHostName();
 	transform( n.begin( ), n.end( ), n.begin( ), (int(*)(int))tolower );
 
-	for (uint32_t i=0; i<m_Hosts.size(); i++)
+	for (uint32_t i = 0; i < m_Hosts.size(); i++)
 	{
-		if (m_Hosts[i]==n)
+		if (m_Hosts[i] == n)
 			AllowedHost = true;
 	}
-	if (m_FilterGProxy && !GProxyGame)
+
+	if (m_FilterGProxy)
 		AllowedHost = false;
 
-	if( !DuplicateFound && !NormalGame && AllowedHost )
+	if( !DuplicateFound && AllowedHost )
 		m_Games.push_back( game );
-
-	/*if (m_War3Version >= 30)
-	{
-		if (m_Bonjour)
-			m_Bonjour->AddGame(game->GetGameName(), game->GetPort(), m_War3Version);
-	}*/
-
-	// the game list cannot hold more than 20 games (warcraft 3 doesn't handle it properly and ignores any further games)
-	// if this game puts us over the limit, remove the oldest game
-	// don't remove the "search game" since that's probably a pretty important game
-	// note: it'll get removed automatically by the 60 second timeout in the main loop when appropriate
 
 	if( m_Games.size( ) > 20 )
 	{
 		for( vector<CIncomingGameHost *> :: iterator i = m_Games.begin( ); i != m_Games.end( ); i++ )
 		{
-			if( game->GetGameName( ) != m_BNET->GetSearchGameName( ) && game->GetReceivedTime( ) == OldestReceivedTime )
+			if (game->GetReceivedTime() == OldestReceivedTime)
 			{
-				m_UDPSocket->Broadcast( 6112, m_GameProtocol->SEND_W3GS_DECREATEGAME( (*i)->GetUniqueGameID( ) ) );
-				delete *i;
-				m_Games.erase( i );
-				break;
+				vector<string> games = m_BNET->GetSearchGameName();
+				for (vector<string> ::iterator j = games.begin(); j != games.end(); j++) 
+				{
+					std::string Game = (*j);
+					std::string GameName = Game.substr(0, Game.find_first_of(":"));
+					if (GameName != game->GetGameName()) 
+					{
+						m_UDPSocket->Broadcast(6112, m_GameProtocol->SEND_W3GS_DECREATEGAME((*i)->GetUniqueGameID()));
+						delete* i;
+						m_Games.erase(i);
+						break;
+					}
+				}
 			}
 		}
 	}
@@ -2368,155 +2567,5 @@ void CGProxy :: UDPCommands( string Message )
 
 void CGProxy :: ReloadConfig ()
 {
-	CConfig CFGF;
-	CConfig *CFG;
-	CFGF.Read( "gproxy.cfg");
-	CFG = &CFGF;
-	m_UDPConsole = CFG->GetInt( "udp_console", 1 ) == 0 ? false : true;
-	m_PublicGames = CFG->GetInt( "publicgames", 1 ) == 0 ? false : true;
-	m_FilterGProxy = CFG->GetInt( "filtergproxy", 0 ) == 0 ? false : true;
-	string nHosts = CFG->GetString( "filterhosts", string());
-	UTIL_ExtractStrings(nHosts, m_Hosts);
-	m_UDPPassword = CFG->GetString( "udp_password", string () );
-}
 
-
-LPDIRECT3D9              g_pD3D = NULL;
-LPDIRECT3DDEVICE9        g_pd3dDevice = NULL;
-D3DPRESENT_PARAMETERS    g_d3dpp = {};
-
-LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
-
-bool CreateDeviceD3D(HWND hWnd)
-{
-	if ((g_pD3D = Direct3DCreate9(D3D_SDK_VERSION)) == NULL)
-		return false;
-
-	ZeroMemory(&g_d3dpp, sizeof(g_d3dpp));
-	g_d3dpp.Windowed = TRUE;
-	g_d3dpp.SwapEffect = D3DSWAPEFFECT_DISCARD;
-	g_d3dpp.BackBufferFormat = D3DFMT_UNKNOWN;
-	g_d3dpp.EnableAutoDepthStencil = TRUE;
-	g_d3dpp.AutoDepthStencilFormat = D3DFMT_D16;
-	g_d3dpp.PresentationInterval = D3DPRESENT_INTERVAL_ONE;
-
-	if (g_pD3D->CreateDevice(D3DADAPTER_DEFAULT, D3DDEVTYPE_HAL, hWnd,
-		D3DCREATE_HARDWARE_VERTEXPROCESSING,
-		&g_d3dpp, &g_pd3dDevice) < 0)
-		return false;
-
-	return true;
-}
-
-void CleanupDeviceD3D()
-{
-	if (g_pd3dDevice) { g_pd3dDevice->Release(); g_pd3dDevice = NULL; }
-	if (g_pD3D) { g_pD3D->Release(); g_pD3D = NULL; }
-}
-
-void ResetDevice()
-{
-	ImGui_ImplDX9_InvalidateDeviceObjects();
-	g_pd3dDevice->Reset(&g_d3dpp);
-	ImGui_ImplDX9_CreateDeviceObjects();
-}
-
-void GuiThread()
-{
-	WNDCLASSEX wc = { sizeof(WNDCLASSEX), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(NULL), NULL, NULL, NULL, NULL, _T("ImGuiExample"), NULL };
-	RegisterClassEx(&wc);
-	HWND hwnd = CreateWindow(wc.lpszClassName, u8"Gproxy 2.1 by Thái Sơn", WS_OVERLAPPEDWINDOW, 100, 100, 200, 200, NULL, NULL, wc.hInstance, NULL);
-
-	if (!CreateDeviceD3D(hwnd))
-	{
-		CleanupDeviceD3D();
-		UnregisterClass(wc.lpszClassName, wc.hInstance);
-		return;
-	}
-
-	ShowWindow(hwnd, SW_SHOWDEFAULT);
-	UpdateWindow(hwnd);
-
-	IMGUI_CHECKVERSION();
-	ImGui::CreateContext();
-	ImGuiIO& io = ImGui::GetIO(); (void)io;
-
-	ImGui::StyleColorsDark();
-
-	ImGui_ImplWin32_Init(hwnd);
-	ImGui_ImplDX9_Init(g_pd3dDevice);
-
-	io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\tahoma.ttf", 18.0f, nullptr, io.Fonts->GetGlyphRangesVietnamese());
-
-	bool done = false;
-	while (!done)
-	{
-		MSG msg;
-		while (PeekMessage(&msg, NULL, 0U, 0U, PM_REMOVE))
-		{
-			TranslateMessage(&msg);
-			DispatchMessage(&msg);
-			if (msg.message == WM_QUIT)
-				done = true;
-		}
-		if (done) break;
-
-		ImGui_ImplDX9_NewFrame();
-		ImGui_ImplWin32_NewFrame();
-		ImGui::NewFrame();
-
-		ImGui::Begin("Tuỳ chỉnh", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoCollapse);
-
-		if (ImGui::Button("Làm mới danh sách trò chơi"))
-		{
-			gGProxy->m_BNET->QueueGetGameList(0xFF);
-			CONSOLE_Print(u8"[BNET] Làm mới danh sách trò chơi", dye_light_purple);
-		}
-
-		ImGui::End();
-
-		ImGui::EndFrame();
-		g_pd3dDevice->SetRenderState(D3DRS_ZENABLE, FALSE);
-		g_pd3dDevice->SetRenderState(D3DRS_ALPHABLENDENABLE, FALSE);
-		g_pd3dDevice->SetRenderState(D3DRS_SCISSORTESTENABLE, FALSE);
-		g_pd3dDevice->Clear(0, NULL, D3DCLEAR_TARGET | D3DCLEAR_ZBUFFER, D3DCOLOR_RGBA(114, 144, 154, 255), 1.0f, 0);
-		if (g_pd3dDevice->BeginScene() >= 0)
-		{
-			ImGui::Render();
-			ImGui_ImplDX9_RenderDrawData(ImGui::GetDrawData());
-			g_pd3dDevice->EndScene();
-		}
-		HRESULT result = g_pd3dDevice->Present(NULL, NULL, NULL, NULL);
-		if (result == D3DERR_DEVICELOST && g_pd3dDevice->TestCooperativeLevel() == D3DERR_DEVICENOTRESET)
-			ResetDevice();
-	}
-
-	ImGui_ImplDX9_Shutdown();
-	ImGui_ImplWin32_Shutdown();
-	ImGui::DestroyContext();
-	CleanupDeviceD3D();
-	DestroyWindow(hwnd);
-	UnregisterClass(wc.lpszClassName, wc.hInstance);
-}
-
-extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM, LPARAM);
-LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
-{
-	if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
-		return true;
-	switch (msg)
-	{
-	case WM_SIZE:
-		if (g_pd3dDevice != NULL && wParam != SIZE_MINIMIZED)
-		{
-			g_d3dpp.BackBufferWidth = LOWORD(lParam);
-			g_d3dpp.BackBufferHeight = HIWORD(lParam);
-			ResetDevice();
-		}
-		return 0;
-	case WM_DESTROY:
-		PostQuitMessage(0);
-		return 0;
-	}
-	return DefWindowProc(hWnd, msg, wParam, lParam);
 }

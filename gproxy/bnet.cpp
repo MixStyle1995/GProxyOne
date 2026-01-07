@@ -94,6 +94,7 @@ CBNET :: CBNET( CGProxy *nGProxy, string nServer, string nBNLSServer, uint16_t n
 	m_InChat = false;
 	m_InGame = false;
 	m_LastFriendListTime = 0;
+	nTimerReconnect = 90;
 }
 
 CBNET :: ~CBNET( )
@@ -152,7 +153,7 @@ bool CBNET :: Update( void *fd, void *send_fd )
 				m_GProxy->SendLocalChat( "Disconnected from battle.net." );
 		}
 
-		CONSOLE_Print( "[BNET] waiting 90 seconds to reconnect" );
+		CONSOLE_Print("[BNET] waiting " + to_string(nTimerReconnect) + " seconds to reconnect");
 		/* delete m_BNLSClient;
 		m_BNLSClient = NULL; */
 		m_BNCSUtil->Reset( m_UserName, m_UserPassword );
@@ -174,7 +175,7 @@ bool CBNET :: Update( void *fd, void *send_fd )
 		if( m_GProxy->m_LocalSocket )
 			m_GProxy->SendLocalChat( "Disconnected from battle.net." );
 
-		CONSOLE_Print( "[BNET] waiting 90 seconds to reconnect" );
+		CONSOLE_Print("[BNET] waiting " + to_string(nTimerReconnect) + " seconds to reconnect");
 		/* delete m_BNLSClient;
 		m_BNLSClient = NULL; */
 		m_BNCSUtil->Reset( m_UserName, m_UserPassword );
@@ -224,23 +225,31 @@ bool CBNET :: Update( void *fd, void *send_fd )
 		{
 			// request 20 games (note: it seems like 20 is the maximum, requesting more doesn't result in more results returned)
 
-			QueueGetGameList( 0xFF );
+			QueueGetGameList( 20 );
 			m_LastGetPublicListTime = GetTime( );
 		}
 
 		// request the search game every 15 seconds
 
-		if( !m_SearchGameName.empty( ) && GetTime( ) - m_SearchGameNameTime >= 120 )
-		{
-			CONSOLE_Print( "[BNET] stopped searching for game \"" + m_SearchGameName + "\"" );
-			m_SearchGameName.clear( );
-			m_SearchGameNameTime = GetTime( );
-		}
-
 		if( !m_GProxy->m_LocalSocket && !m_SearchGameName.empty( ) && GetTime( ) - m_LastGetSearchGameTime >= 15 && m_OutPackets.size( ) <= 2 )
 		{
-			QueueGetGameList( m_SearchGameName );
-			m_LastGetSearchGameTime = GetTime( );
+			for (vector<string> ::iterator i = m_SearchGameName.begin(); i != m_SearchGameName.end(); ) 
+			{
+				std::string Game = (*i);
+				std::string GameName = Game.substr(0, Game.find_first_of(":"));
+				std::string Time = Game.substr(Game.find_last_of(":") + 1, Game.length());
+				if (GetTime() - UTIL_ToUInt32(Time) < 120) 
+				{
+					QueueGetGameList(GameName);
+					i++;
+				}
+				else 
+				{
+					CONSOLE_Print( "[BNET] stopped searching for game \"" + GameName + "\"" );
+					i = m_SearchGameName.erase(i);
+				}
+			}
+			m_LastGetSearchGameTime = GetTime();
 		}
 
 		// check if at least one packet is waiting to be sent and if we've waited long enough to prevent flooding
@@ -286,7 +295,7 @@ bool CBNET :: Update( void *fd, void *send_fd )
 		{
 			// the connection attempt completed
 
-			CONSOLE_Print( "[BNET] connected" );
+			CONSOLE_Print( "[BNET] connected | War3 Version: 1." + to_string(m_War3Version));
 			m_Socket->PutBytes( m_Protocol->SEND_PROTOCOL_INITIALIZE_SELECTOR( ) );
 			m_Socket->PutBytes( m_Protocol->SEND_SID_AUTH_INFO( m_War3Version, m_GProxy->m_TFT, m_CountryAbbrev, m_Country ) );
 			m_Socket->DoSend( (fd_set *)send_fd );
@@ -303,7 +312,7 @@ bool CBNET :: Update( void *fd, void *send_fd )
 			// the connection attempt timed out (15 seconds)
 
 			CONSOLE_Print( "[BNET] connect timed out" );
-			CONSOLE_Print( "[BNET] waiting 90 seconds to reconnect" );
+			CONSOLE_Print( "[BNET] waiting " + to_string(nTimerReconnect) + " seconds to reconnect" );
 			m_Socket->Reset( );
 			m_LastDisconnectedTime = GetTime( );
 			m_WaitingToConnect = true;
@@ -311,7 +320,7 @@ bool CBNET :: Update( void *fd, void *send_fd )
 		}
 	}
 
-	if( !m_Socket->GetConnecting( ) && !m_Socket->GetConnected( ) && ( m_FirstConnect || GetTime( ) - m_LastDisconnectedTime >= 90 ) )
+	if( !m_Socket->GetConnecting( ) && !m_Socket->GetConnected( ) && ( m_FirstConnect || GetTime( ) - m_LastDisconnectedTime >= nTimerReconnect) )
 	{
 		// attempt to connect to battle.net
 
@@ -442,18 +451,25 @@ void CBNET :: ProcessPackets( )
 
 					// filter game names
 
-					if( !m_PublicGameFilter.empty( ) && (*i)->GetGameName( ) != m_SearchGameName )
+					if( !m_PublicGameFilter.empty( ))
 					{
-						string FilterLower = m_PublicGameFilter;
-						string GameNameLower = (*i)->GetGameName( );
-						transform( FilterLower.begin( ), FilterLower.end( ), FilterLower.begin( ), (int(*)(int))tolower );
-						transform( GameNameLower.begin( ), GameNameLower.end( ), GameNameLower.begin( ), (int(*)(int))tolower );
-
-						if( GameNameLower.find( FilterLower ) == string :: npos )
+						for (vector<string> ::iterator j = m_SearchGameName.begin(); j != m_SearchGameName.end(); j++)
 						{
-							delete *i;
-							i = Games.erase( i );
-							continue;
+							std::string GameName = (*j).substr(0, (*j).find_first_of(":") - 2);
+							if ((*i)->GetGameName() != GameName) 
+							{
+								string FilterLower = m_PublicGameFilter;
+								string GameNameLower = (*i)->GetGameName();
+								transform(FilterLower.begin(), FilterLower.end(), FilterLower.begin(), (int(*)(int))tolower);
+								transform(GameNameLower.begin(), GameNameLower.end(), GameNameLower.begin(), (int(*)(int))tolower);
+
+								if (GameNameLower.find(FilterLower) == string::npos)
+								{
+									delete* i;
+									i = Games.erase(i);
+									continue;
+								}
+							}
 						}
 					}
 
@@ -627,8 +643,16 @@ void CBNET :: ProcessPackets( )
 				else
 				{
 					CONSOLE_Print( u8"[BNET] đăng nhập không thành công - tên người dùng không hợp lệ, đang ngắt kết nối", dye_light_purple);
-					m_Socket->Disconnect( );
+					m_Socket->Disconnect();
 					delete Packet;
+
+					CFG.ReplaceKeyValue("username", "");
+					/*gGProxy->m_Quit = true;
+					gRestart = true;
+					system("cls");
+					CONSOLE_Print(u8"[INFO] Khởi động lại GProxy " + gGProxy->m_Version);
+					gInputBuffer.clear();*/
+
 					return;
 				}
 
@@ -649,20 +673,17 @@ void CBNET :: ProcessPackets( )
 				}
 				else
 				{
-					CONSOLE_Print( "[BNET] logon failed - invalid password, disconnecting" );
-
-					// try to figure out if the user might be using the wrong logon type since too many people are confused by this
-
-					string Server = m_Server;
-					transform( Server.begin( ), Server.end( ), Server.begin( ), (int(*)(int))tolower );
-
-					if( m_PasswordHashType == "pvpgn" && ( Server == "useast.battle.net" || Server == "uswest.battle.net" || Server == "asia.battle.net" || Server == "europe.battle.net" ) )
-						CONSOLE_Print( "[BNET] it looks like you're trying to connect to a battle.net server using a pvpgn logon type, check your config file's \"battle.net custom data\" section" );
-					else if( m_PasswordHashType != "pvpgn" && ( Server != "useast.battle.net" && Server != "uswest.battle.net" && Server != "asia.battle.net" && Server != "europe.battle.net" ) )
-						CONSOLE_Print( "[BNET] it looks like you're trying to connect to a pvpgn server using a battle.net logon type, check your config file's \"battle.net custom data\" section" );
-
-					m_Socket->Disconnect( );
+					CONSOLE_Print(u8"[BNET] đăng nhập không thành công - mật khẩu không hợp lệ, ngắt kết nối", dye_light_purple);
+					m_Socket->Disconnect();
 					delete Packet;
+
+					CFG.ReplaceKeyValue("password", "");
+					/*gGProxy->m_Quit = true;
+					gRestart = true;
+					system("cls");
+					CONSOLE_Print(u8"[INFO] Khởi động lại GProxy " + gGProxy->m_Version);
+					gInputBuffer.clear();*/
+
 					return;
 				}
 
@@ -821,7 +842,7 @@ void CBNET :: QueueChatCommand( string chatCommand, string user, bool whisper )
 void CBNET :: QueueGetGameList( uint32_t numGames )
 {
 	if( m_LoggedIn )
-		m_OutPackets.push( m_Protocol->SEND_SID_GETADVLISTEX( string( ), 0xFF ) );
+		m_OutPackets.push( m_Protocol->SEND_SID_GETADVLISTEX( string( ), numGames) );
 }
 
 void CBNET :: QueueGetGameList( string gameName )
