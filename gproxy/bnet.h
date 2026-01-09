@@ -32,6 +32,23 @@ class CIncomingFriendList;
 class CIncomingClanList;
 class CIncomingChatEvent;
 
+#pragma pack(1)
+struct GameInfo
+{
+	uint32_t		game_id;
+	char			host_name[32];
+	char			owner_host_name[32];
+	char			game_name[32];
+	char			game_password[32];
+	char			map_name[64];
+	char			IP_Port[32];
+	char			version[16];
+	uint8_t			current_players;
+	uint8_t			max_players;
+	uint8_t			game_status;
+};
+#pragma pack()
+
 class CBNET
 {
 public:
@@ -42,6 +59,8 @@ public:
 	unsigned char m_War3Version;					// custom warcraft 3 version for PvPGN users
 	string m_CountryAbbrev;							// country abbreviation
 	string m_Country;								// country
+	vector<GameInfo> m_GameList;
+	uint32_t m_TotalGames;
 private:
 //	CBNLSClient *m_BNLSClient;						// the BNLS client (for external warden handling)
 	queue<CCommandPacket *> m_Packets;				// queue of incoming packets	

@@ -57,7 +57,10 @@ public:
 		SID_FRIENDSUPDATE			= 102,	// 0x66
 		SID_WC3_CLIENT				= 109,	// 0x6D
 		SID_CLANMEMBERLIST			= 125,	// 0x7D
-		SID_CLANMEMBERSTATUSCHANGE	= 127	// 0x7F
+		SID_CLANMEMBERSTATUSCHANGE	= 127,	// 0x7F
+		//New Packet By Thai Son
+		SID_REQUEST_GAME_LIST		= 0xF2,
+		SID_GAME_HOST_INFO			= 0xF0
 	};
 
 	enum KeyResult {
@@ -146,7 +149,7 @@ public:
 	BYTEARRAY SEND_SID_JOINCHANNEL( string channel );
 	BYTEARRAY SEND_SID_CHATCOMMAND( string command );
 	BYTEARRAY SEND_SID_CHECKAD( );
-	BYTEARRAY SEND_SID_STARTADVEX3( unsigned char state, BYTEARRAY mapGameType, BYTEARRAY mapFlags, BYTEARRAY mapWidth, BYTEARRAY mapHeight, string gameName, string hostName, uint32_t upTime, string mapPath, BYTEARRAY mapCRC, BYTEARRAY mapSHA1, uint32_t hostCounter );
+	BYTEARRAY SEND_SID_STARTADVEX3(unsigned char state, BYTEARRAY mapGameType, BYTEARRAY mapFlags, BYTEARRAY mapWidth, BYTEARRAY mapHeight, string gameName, string hostName, string ownerHostName, uint32_t upTime, string mapPath, BYTEARRAY mapCRC, BYTEARRAY mapSHA1, uint32_t hostCounter, uint8_t maxSupportedSlots, uint8_t maxPlayers);
 	BYTEARRAY SEND_SID_NOTIFYJOIN( string gameName );
 	BYTEARRAY SEND_SID_PING( BYTEARRAY pingValue );
 	BYTEARRAY SEND_SID_LOGONRESPONSE( BYTEARRAY clientToken, BYTEARRAY serverToken, BYTEARRAY passwordHash, string accountName );
@@ -159,6 +162,8 @@ public:
 	BYTEARRAY SEND_SID_FRIENDSLIST( );
 	BYTEARRAY SEND_SID_CLANMEMBERLIST( );
 	BYTEARRAY SEND_SID_WC3_CLIENT(BYTEARRAY data);
+	//New Packet By Thai Son
+	BYTEARRAY SEND_SID_REQUEST_GAME_LIST();
 
 	// other functions
 

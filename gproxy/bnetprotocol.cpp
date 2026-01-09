@@ -684,7 +684,7 @@ BYTEARRAY CBNETProtocol :: SEND_SID_CHECKAD( )
 	return packet;
 }
 
-BYTEARRAY CBNETProtocol :: SEND_SID_STARTADVEX3( unsigned char state, BYTEARRAY mapGameType, BYTEARRAY mapFlags, BYTEARRAY mapWidth, BYTEARRAY mapHeight, string gameName, string hostName, uint32_t upTime, string mapPath, BYTEARRAY mapCRC, BYTEARRAY mapSHA1, uint32_t hostCounter )
+BYTEARRAY CBNETProtocol :: SEND_SID_STARTADVEX3( unsigned char state, BYTEARRAY mapGameType, BYTEARRAY mapFlags, BYTEARRAY mapWidth, BYTEARRAY mapHeight, string gameName, string hostName, string ownerHostName, uint32_t upTime, string mapPath, BYTEARRAY mapCRC, BYTEARRAY mapSHA1, uint32_t hostCounter, uint8_t maxSupportedSlots, uint8_t maxPlayers)
 {
 	// todotodo: sort out how GameType works, the documentation is horrendous
 
@@ -734,12 +734,14 @@ Flags:
 	UTIL_AppendByteArrayFast( StatString, mapCRC );
 	UTIL_AppendByteArrayFast( StatString, mapPath );
 	UTIL_AppendByteArrayFast( StatString, hostName );
-	StatString.push_back( 0 );
+	StatString.push_back(0);
 	UTIL_AppendByteArrayFast( StatString, mapSHA1 );
+	UTIL_AppendByteArrayFast(StatString, ownerHostName);
+	StatString.push_back(maxPlayers);
 	StatString = UTIL_EncodeStatString( StatString );
 
-	if( mapGameType.size( ) == 4 && mapFlags.size( ) == 4 && mapWidth.size( ) == 2 && mapHeight.size( ) == 2 && !gameName.empty( ) && !hostName.empty( ) && !mapPath.empty( ) && mapCRC.size( ) == 4 && mapSHA1.size( ) == 20 && StatString.size( ) < 128 && HostCounterString.size( ) == 8 )
-	{
+	//if( mapGameType.size( ) == 4 && mapFlags.size( ) == 4 && mapWidth.size( ) == 2 && mapHeight.size( ) == 2 && !gameName.empty( ) && !hostName.empty( ) && !mapPath.empty( ) && mapCRC.size( ) == 4 && mapSHA1.size( ) == 20 && StatString.size( ) < 128 && HostCounterString.size( ) == 8 )
+	//{
 		// make the rest of the packet
 
 		packet.push_back( BNET_HEADER_CONSTANT );						// BNET header constant
@@ -756,14 +758,14 @@ Flags:
 		UTIL_AppendByteArray( packet, CustomGame, 4 );					// Custom Game
 		UTIL_AppendByteArrayFast( packet, gameName );					// Game Name
 		packet.push_back( 0 );											// Game Password is NULL
-		packet.push_back( 98 );											// Slots Free (ascii 98 = char 'b' = 11 slots free) - note: do not reduce this as this is the # of PID's Warcraft III will allocate
+		packet.push_back( 86 + maxSupportedSlots);											// Slots Free (ascii 98 = char 'b' = 11 slots free) - note: do not reduce this as this is the # of PID's Warcraft III will allocate
 		UTIL_AppendByteArrayFast( packet, HostCounterString, false );	// Host Counter
 		UTIL_AppendByteArrayFast( packet, StatString );					// Stat String
 		packet.push_back( 0 );											// Stat String null terminator (the stat string is encoded to remove all even numbers i.e. zeros)
 		AssignLength( packet );
-	}
-	else
-		CONSOLE_Print( "[BNETPROTO] invalid parameters passed to SEND_SID_STARTADVEX3" );
+	//}
+	//else
+		//CONSOLE_Print( "[BNETPROTO] invalid parameters passed to SEND_SID_STARTADVEX3" );
 
 	// DEBUG_Print( "SENT SID_STARTADVEX3" );
 	// DEBUG_Print( packet );
@@ -1022,6 +1024,17 @@ BYTEARRAY CBNETProtocol::SEND_SID_WC3_CLIENT(BYTEARRAY data)
 	UTIL_AppendByteArrayFast(packet, data);	// warden response
 
 
+	AssignLength(packet);
+	return packet;
+}
+
+BYTEARRAY CBNETProtocol::SEND_SID_REQUEST_GAME_LIST()
+{
+	BYTEARRAY packet;
+	packet.push_back(BNET_HEADER_CONSTANT);
+	packet.push_back(SID_REQUEST_GAME_LIST);
+	packet.push_back(0);
+	packet.push_back(0);
 	AssignLength(packet);
 	return packet;
 }

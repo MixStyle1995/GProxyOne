@@ -86,12 +86,13 @@
       <WholeProgramOptimization>false</WholeProgramOptimization>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
+      <LanguageStandard>stdcpp17</LanguageStandard>
     </ClCompile>
     <Link>
       <AdditionalDependencies>ws2_32.lib;winmm.lib;pdcurses.lib;BNCSUtil.lib;dnssd.lib;%(AdditionalDependencies)</AdditionalDependencies>
       <AdditionalLibraryDirectories>..\pdcurses;..\bncsutil\vc8_build\Release;..\Bonjour\Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <GenerateDebugInformation>false</GenerateDebugInformation>
-      <SubSystem>Console</SubSystem>
+      <SubSystem>Windows</SubSystem>
       <OptimizeReferences>true</OptimizeReferences>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <DataExecutionPrevention>false</DataExecutionPrevention>
@@ -119,6 +120,7 @@
     <ClCompile Include="gproxy_imgui.cpp" />
     <ClCompile Include="gpsprotocol.cpp" />
     <ClCompile Include="socket.cpp" />
+    <ClCompile Include="textselect.cpp" />
     <ClCompile Include="util.cpp" />
   </ItemGroup>
   <ItemGroup>
@@ -133,8 +135,9 @@
     <ClInclude Include="gproxy_imgui.h" />
     <ClInclude Include="gpsprotocol.h" />
     <ClInclude Include="Obuscate.hpp" />
-    <ClInclude Include="resource.h" />
+    <ClInclude Include="resource1.h" />
     <ClInclude Include="socket.h" />
+    <ClInclude Include="textselect.hpp" />
     <ClInclude Include="util.h" />
     <ClInclude Include="util_imgui.h" />
   </ItemGroup>
@@ -143,6 +146,12 @@
       <Project>{cfb9aee6-c0bb-49b0-b0f5-f564975202b8}</Project>
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="gproxy.rc" />
+  </ItemGroup>
+  <ItemGroup>
+    <Image Include="icon.ico" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

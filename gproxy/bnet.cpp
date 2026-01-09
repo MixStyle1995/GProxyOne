@@ -95,6 +95,7 @@ CBNET :: CBNET( CGProxy *nGProxy, string nServer, string nBNLSServer, uint16_t n
 	m_InGame = false;
 	m_LastFriendListTime = 0;
 	nTimerReconnect = 90;
+	m_TotalGames = 0;
 }
 
 CBNET :: ~CBNET( )
@@ -422,6 +423,27 @@ void CBNET :: ProcessPackets( )
 		{
 			switch( Packet->GetID( ) )
 			{
+			case CBNETProtocol::SID_GAME_HOST_INFO:
+			{
+				m_GameList.clear();
+
+				auto Data = Packet->GetData();
+				uint32_t total_games = UTIL_ByteArrayToUInt32(Data, false, 4);
+				m_TotalGames = total_games;
+
+				if (Packet->GetData().size() >= 8)
+				{
+					GameInfo* pGameArray = (GameInfo*)(Packet->GetData().data() + 8);
+					for (uint32_t i = 0; i < total_games; i++)
+					{
+						GameInfo* pData = &pGameArray[i];
+						if (!pData)	continue;
+
+						m_GameList.push_back(*pData);
+					}
+				}
+				break;
+			}
 			case CBNETProtocol :: SID_NULL:
 				// warning: we do not respond to NULL packets with a NULL packet of our own
 				// this is because PVPGN servers are programmed to respond to NULL packets so it will create a vicious cycle of useless traffic

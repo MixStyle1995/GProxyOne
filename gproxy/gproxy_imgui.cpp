@@ -1,12 +1,4 @@
-﻿/*
-   ImGui Implementation for GProxy - PROFESSIONAL VERSION
-   - Game list with detailed info
-   - Channel sidebar in console (80/20 split)
-   - Settings integrated in Console tab
-   - Better colors (no gray text)
-   - Bigger fonts
-   - Professional layout
-*/
+﻿#pragma comment(linker, "/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup")
 
 #include "gproxy.h"
 #include "util.h"
@@ -61,6 +53,7 @@ static char botMapBuffer[256] = "";
 static int portBuffer = 6112;
 int selectedWar3Version = 0; // 0=1.24, 1=1.26, 2=1.27, 3=1.28, 4=1.29, 5=1.31
 static bool settingsInitialized = false;
+static bool showPassword = false;  // Toggle for password visibility
 
 // BETTER COLORS - NO GRAY!
 ImVec4 GetColorFromPair(int color_pair)
@@ -213,11 +206,11 @@ std::string TrimString(const std::string& str) {
     return str.substr(first, last - first + 1);
 }
 
-PvPGNGameInfo ParseGameLine(const std::string& line) 
+PvPGNGameInfo ParseGameLine(const std::string& line)
 {
     PvPGNGameInfo info;
 
-    try 
+    try
     {
         size_t startPos = line.find_first_not_of("0123456789. \t");
         if (startPos == std::string::npos) return info;
@@ -259,7 +252,7 @@ PvPGNGameInfo ParseGameLine(const std::string& line)
         }
 
     }
-    catch (...) 
+    catch (...)
     {
         return PvPGNGameInfo();
     }
@@ -267,14 +260,14 @@ PvPGNGameInfo ParseGameLine(const std::string& line)
     return info;
 }
 
-void ParseGamesOutput(const std::string& output) 
+void ParseGamesOutput(const std::string& output)
 {
     gParsedGames.clear();
 
     std::istringstream stream(output);
     std::string line;
 
-    while (std::getline(stream, line)) 
+    while (std::getline(stream, line))
     {
         if (line.empty() ||
             line.find("Games list") != std::string::npos ||
@@ -287,7 +280,7 @@ void ParseGamesOutput(const std::string& output)
         }
 
         PvPGNGameInfo gameInfo = ParseGameLine(line);
-        if (!gameInfo.gameName.empty()) 
+        if (!gameInfo.gameName.empty())
         {
             gParsedGames.push_back(gameInfo);
         }
@@ -341,22 +334,50 @@ exit
     bat.close();
 }
 
+enum t_game_status
+{
+    game_status_started,
+    game_status_full,
+    game_status_open,
+    game_status_loaded,
+    game_status_done
+};
+
+string GetGameStatusString(t_game_status status)
+{
+    switch (status)
+    {
+        case game_status_started:   return u8"Đang chơi";    // game_status_started
+        case game_status_full:      return u8"Đầy";          // game_status_full
+        case game_status_open:      return u8"Chờ";          // game_status_open
+        case game_status_loaded:    return u8"Đang tải";     // game_status_loaded
+        case game_status_done:      return u8"Kết thúc";     // game_status_done
+        default:                    return u8"Không rõ";     // Unknown
+    }
+}
+
+void TextCentered(const char* text)
+{
+    float windowWidth = ImGui::GetContentRegionAvail().x;
+    float textWidth = ImGui::CalcTextSize(text).x;
+
+    ImGui::SetCursorPosX((windowWidth - textWidth) * 0.5f + ImGui::GetCursorPosX());
+    ImGui::Text("%s", text);
+}
+
 void RenderImGuiConsole()
 {
     ImGui::SetNextWindowPos(ImVec2(0, 0));
     ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
 
-    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar |
-        ImGuiWindowFlags_NoResize |
-        ImGuiWindowFlags_NoMove |
-        ImGuiWindowFlags_NoCollapse;
+    ImGuiWindowFlags flags = ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoCollapse;
 
     ImGui::Begin("##MainWindow", nullptr, flags);
 
     // Title bar
-    ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "GProxy++ 3.0 New By Thái Sơn");
+    ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "GProxy++ 3.2 New By Thái Sơn");
 
-    ImGui::SameLine(ImGui::GetWindowWidth() - 450);
+    ImGui::SameLine(ImGui::GetWindowWidth() - 320);
 
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.2f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.8f, 0.3f, 1.0f));
@@ -372,14 +393,13 @@ void RenderImGuiConsole()
     }
     ImGui::PopStyleColor(3);
 
-    ImGui::SameLine();
-
+    /*ImGui::SameLine();
     if (ImGui::Button(showConsoleWindow ? "Hide CMD" : "Show CMD", ImVec2(140, 0)))
     {
         showConsoleWindow = !showConsoleWindow;
         if (g_ConsoleWindow)
             ShowWindow(g_ConsoleWindow, showConsoleWindow ? SW_SHOW : SW_HIDE);
-    }
+    }*/
 
     ImGui::SameLine();
 
@@ -409,8 +429,7 @@ void RenderImGuiConsole()
 
             ImGui::PushStyleVar(ImGuiStyleVar_ItemSpacing, ImVec2(0, 3));
 
-            std::vector<ColoredLine> bufferCopy = gMainBuffer;
-            for (const auto& line : bufferCopy)
+            for (const auto& line : gMainBuffer)
             {
                 if (line.segments.empty())
                     continue;
@@ -516,9 +535,10 @@ void RenderImGuiConsole()
                 // Initialize buffers with current values (only once)
                 if (!settingsInitialized)
                 {
-                    strncpy_s(serverBuffer, gGProxy->m_Server.c_str(), sizeof(serverBuffer) - 1);
-                    strncpy_s(usernameBuffer, gGProxy->m_Username.c_str(), sizeof(usernameBuffer) - 1);
-                    strncpy_s(passwordBuffer, gGProxy->m_Password.c_str(), sizeof(passwordBuffer) - 1);
+                    strcpy(serverBuffer, CFG.GetString("server", string()).c_str());
+                    strcpy(usernameBuffer, CFG.GetString("username", string()).c_str());
+                    strcpy(passwordBuffer, CFG.GetString("password", string()).c_str());
+
                     strcpy(botNameBuffer, CFG.GetString("BotName", string()).c_str());
                     strcpy(botMapBuffer, CFG.GetString("BotMap", string()).c_str());
                     portBuffer = gGProxy->m_Port;
@@ -557,14 +577,26 @@ void RenderImGuiConsole()
 
                 ImGui::Text("Password:");
                 ImGui::SameLine();
-                ImGui::PushItemWidth(-10);
-                ImGui::InputText("##Password", passwordBuffer, sizeof(passwordBuffer), ImGuiInputTextFlags_Password);
+                ImGui::PushItemWidth(-57);
+                ImGui::InputText("##Password", passwordBuffer, sizeof(passwordBuffer), showPassword ? 0 : ImGuiInputTextFlags_Password);
                 ImGui::PopItemWidth();
+
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.35f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.4f, 0.4f, 0.45f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.25f, 0.25f, 0.3f, 1.0f));
+                if (ImGui::Button(showPassword ? "(o)" : "(-)", ImVec2(40, 0))) {
+                    showPassword = !showPassword;
+                }
+                ImGui::PopStyleColor(3);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(showPassword ? "Hide password" : "Show password");
+                }
 
                 ImGui::Text("Port:");
                 ImGui::SameLine();
                 ImGui::PushItemWidth(120);
-                if (ImGui::InputInt("##Port", &portBuffer)) 
+                if (ImGui::InputInt("##Port", &portBuffer))
                 {
                     CFG.ReplaceKeyValue("port", to_string(portBuffer));
                 }
@@ -591,6 +623,7 @@ void RenderImGuiConsole()
                     gGProxy->m_BNET->m_WaitingToConnect = true;
                     gGProxy->m_BNET->SetTimerReconnect(1);
 
+                    CFG.ReplaceKeyValue("server", serverBuffer);
                     CFG.ReplaceKeyValue("username", usernameBuffer);
                     CFG.ReplaceKeyValue("password", passwordBuffer);
                     CONSOLE_Print("[SYSTEM] Connecting to " + string(serverBuffer) + "...", dye_light_green);
@@ -756,168 +789,93 @@ void RenderImGuiConsole()
             ImGui::EndTabItem();
         }
 
-        // Games tab with detailed table
-
-        //if (ImGui::BeginTabItem("Games"))
-        //{
-        //    // Refresh button
-        //    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.25f, 0.60f, 0.40f, 1.0f));
-        //    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.35f, 0.70f, 0.50f, 1.0f));
-        //    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.20f, 0.50f, 0.35f, 1.0f));
-
-        //    if (ImGui::Button("Refresh (/games)", ImVec2(180, 35)))
-        //    {
-        //        gInputBuffer = "/games";
-        //        gGamesRawOutput.clear();
-        //        gWaitingForGames = true;
-        //        gGamesStartTime = GetTime();
-        //    }
-        //    ImGui::PopStyleColor(3);
-
-        //    ImGui::SameLine();
-
-        //    if (gWaitingForGames) {
-        //        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.6f, 1.0f), "Loading...");
-        //    }
-        //    else {
-        //        ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f),
-        //            "Total Games: %d", (int)gParsedGames.size());
-        //    }
-
-        //    ImGui::Separator();
-        //    ImGui::Spacing();
-
-        //    ImGui::BeginChild("##GameList", ImVec2(0, 0), true);
-
-        //    if (!gParsedGames.empty())
-        //    {
-        //        ImGui::Columns(5, "gameColumns");
-        //        ImGui::Separator();
-
-        //        ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "Game Name");
-        //        ImGui::NextColumn();
-        //        ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "Host");
-        //        ImGui::NextColumn();
-        //        ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "Map");
-        //        ImGui::NextColumn();
-        //        ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "Players");
-        //        ImGui::NextColumn();
-        //        ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "Status");
-        //        ImGui::NextColumn();
-        //        ImGui::Separator();
-
-        //        for (const auto& game : gParsedGames)
-        //        {
-        //            ImGui::TextColored(ImVec4(1.0f, 1.0f, 1.0f, 1.0f), "%s", game.gameName.c_str());
-        //            ImGui::NextColumn();
-
-        //            ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f), "%s", game.hostName.c_str());
-        //            ImGui::NextColumn();
-
-        //            ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.6f, 1.0f), "%s", game.mapName.c_str());
-        //            ImGui::NextColumn();
-
-        //            ImGui::TextColored(ImVec4(0.6f, 1.0f, 1.0f, 1.0f), "%d/%d", game.currentPlayers, game.maxPlayers);
-        //            ImGui::NextColumn();
-
-        //            ImVec4 statusColor;
-        //            std::string status = game.status;
-
-        //            if (status.find("Started") != std::string::npos ||
-        //                status.find("Playing") != std::string::npos ||
-        //                status.find("started") != std::string::npos) {
-        //                statusColor = ImVec4(1.0f, 0.5f, 0.5f, 1.0f);
-        //            }
-        //            else if (status.find("Full") != std::string::npos ||
-        //                status.find("full") != std::string::npos) {
-        //                statusColor = ImVec4(1.0f, 0.7f, 0.3f, 1.0f);
-        //            }
-        //            else {
-        //                statusColor = ImVec4(0.6f, 1.0f, 0.6f, 1.0f);
-        //            }
-
-        //            if (status.empty()) status = "Waiting";
-
-        //            ImGui::TextColored(statusColor, "%s", status.c_str());
-        //            ImGui::NextColumn();
-        //        }
-
-        //        ImGui::Columns(1);
-        //        ImGui::Separator();
-        //    }
-        //    else
-        //    {
-        //        ImGui::Spacing();
-        //        ImGui::Spacing();
-
-        //        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.6f, 1.0f),
-        //            "No games found.");
-        //        ImGui::Spacing();
-        //        ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f),
-        //            "Click 'Refresh (/games)' to load games from PvPGN server.");
-        //    }
-
-        //    ImGui::EndChild();
-        //    ImGui::EndTabItem();
-        //}
-
         if (ImGui::BeginTabItem("Games"))
         {
             if (ImGui::Button("Refresh Game List", ImVec2(180, 35)))
             {
                 if (gGProxy && gGProxy->m_BNET)
-                    gGProxy->m_BNET->QueueGetGameList(20);
+                {
+                    gGProxy->m_BNET->m_TotalGames = 0;
+					gGProxy->m_BNET->m_GameList.clear();
+                    gGProxy->m_BNET->m_Socket->PutBytes(gGProxy->m_BNET->m_Protocol->SEND_SID_REQUEST_GAME_LIST());
+                }
             }
 
             ImGui::SameLine();
-            ImGui::Text("Total Games: %d", (int)gGProxy->m_Games.size());
+            ImGui::Text("Total Games: %d", gGProxy->m_BNET->m_TotalGames);
 
             ImGui::Separator();
             ImGui::Spacing();
 
             ImGui::BeginChild("##GameList", ImVec2(0, 0), true);
 
-            if (!gGProxy->m_Games.empty())
+            if (!gGProxy->m_BNET->m_GameList.empty())
             {
-                ImGui::Columns(5, "gameColumns");
+                ImGui::Columns(8, "gameColumns");
+
+                ImGui::SetColumnWidth(0, 80.0f);  
+                ImGui::SetColumnWidth(1, 220.0f); 
+                ImGui::SetColumnWidth(2, 130.0f);
+                ImGui::SetColumnWidth(3, 130.0f);
+                ImGui::SetColumnWidth(4, 370.0f); 
+                ImGui::SetColumnWidth(5, 80.0f);  
+                ImGui::SetColumnWidth(6, 80.0f);  
+                ImGui::SetColumnWidth(7, 140.0f);  
+
                 ImGui::Separator();
 
                 // Header
-                ImGui::Text("Game Name"); ImGui::NextColumn();
-                ImGui::Text("Host"); ImGui::NextColumn();
-                ImGui::Text("Map"); ImGui::NextColumn();
-                ImGui::Text("Slots"); ImGui::NextColumn();
-                ImGui::Text("Time"); ImGui::NextColumn();
+                TextCentered("Phiên \nbản"); ImGui::NextColumn();
+                TextCentered(u8"Tên Game"); ImGui::NextColumn();
+                TextCentered("Bot"); ImGui::NextColumn();
+                TextCentered(u8"Tên Host"); ImGui::NextColumn();
+                TextCentered("Map"); ImGui::NextColumn();
+                TextCentered("Slots"); ImGui::NextColumn();
+                TextCentered("Trạng \nThái"); ImGui::NextColumn();
+                TextCentered("IP/Port"); ImGui::NextColumn();
+
                 ImGui::Separator();
 
-                for (auto& game : gGProxy->m_Games)
-                {
-                    if (game)
-                    {
-                        // Game name
-                        std::string gameName = game->GetGameName();
-                        ImGui::Text("%s", gameName.c_str());
-                        ImGui::NextColumn();
+                for (auto& game : gGProxy->m_BNET->m_GameList)
+                { 
+                    //// Game Id
+                    //ImGui::Text("%d", game.game_id);
+                    //ImGui::NextColumn();
 
-                        // Host
-                        std::string hostName = game->GetHostName();
-                        ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f), "%s", hostName.c_str());
-                        ImGui::NextColumn();
+                    // Game version
+                    ImGui::Text("%s", game.version);
+                    ImGui::NextColumn();
 
-                        // Map
-                        std::string mapPath = game->GetMapPath();
-                        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.6f, 1.0f), "%s", mapPath.c_str());
-                        ImGui::NextColumn();
+                    // Game name
+                    TextCentered(game.game_name);
+                    ImGui::NextColumn();
 
-                        // Slots
-                        ImGui::Text("%d", game->GetSlotsTotal());
-                        ImGui::NextColumn();
+					// bot name
+                    ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s", game.host_name);
+                    ImGui::NextColumn();
 
-                        // Time
-                        uint32_t elapsed = game->GetElapsedTime();
-                        ImGui::Text("%d:%02d", elapsed / 60, elapsed % 60);
-                        ImGui::NextColumn();
-                    }
+					// host name
+                    std::string hostName = game.host_name;
+                    ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f), "%s", game.owner_host_name);
+                    ImGui::NextColumn();
+
+                    // Map
+                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.6f, 1.0f), "%s", game.map_name);
+                    ImGui::NextColumn();
+
+                    // Slots
+                    ImGui::Text("%d / %d", game.current_players - 1, game.max_players);
+                    ImGui::NextColumn();
+
+                    // Status
+                    ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.6f, 1.0f), "%s", GetGameStatusString((t_game_status)game.game_status).c_str());
+                    ImGui::NextColumn();
+
+					// IP/Port
+                    ImGui::TextColored(ImVec4(0.0f, 0.8f, 1.0f, 1.0f), "%s", game.IP_Port);
+                    ImGui::NextColumn();
+
+                    ImGui::Separator();
                 }
 
                 ImGui::Columns(1);
@@ -990,16 +948,44 @@ void GuiThread()
         showConsoleWindow = false;
     }
 
+    if (g_ConsoleWindow)
+    {
+        SetWindowPos(g_ConsoleWindow, HWND_BOTTOM, -10000, -10000, 0, 0, SWP_NOSIZE);
+    }
+
+    HINSTANCE hInstance = GetModuleHandle(NULL);
+
+    HICON hIcon = (HICON)LoadImage(hInstance, MAKEINTRESOURCE(IDI_APPICON), IMAGE_ICON, GetSystemMetrics(SM_CXICON), GetSystemMetrics(SM_CYICON), LR_DEFAULTCOLOR);
+    HICON hIconSm = (HICON)LoadImage(hInstance, MAKEINTRESOURCE(IDI_APPICON), IMAGE_ICON, GetSystemMetrics(SM_CXSMICON), GetSystemMetrics(SM_CYSMICON), LR_DEFAULTCOLOR);
+
+    if (!hIcon)
+        hIcon = LoadIcon(hInstance, MAKEINTRESOURCE(IDI_APPICON));
+
+    if (!hIconSm)
+        hIconSm = (HICON)LoadImage(hInstance, MAKEINTRESOURCE(IDI_APPICON), IMAGE_ICON, 16, 16, 0);
+
     WNDCLASSEX wc = { sizeof(WNDCLASSEX), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(NULL), NULL, NULL, NULL, NULL, _T("GProxyImGui"), NULL };
     RegisterClassEx(&wc);
 
-    HWND hwnd = CreateWindowEx(WS_EX_APPWINDOW, wc.lpszClassName, _T("GProxy++ 3.0 New"), WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, 50, 50, 1280, 800, NULL, NULL, wc.hInstance, NULL);
+    HWND hwnd = CreateWindowEx(WS_EX_APPWINDOW, wc.lpszClassName, _T("GProxy++ 3.2 New"), WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, 50, 50, 1280, 800, NULL, NULL, wc.hInstance, NULL);
     if (!CreateDeviceD3D(hwnd))
     {
         CleanupDeviceD3D();
         UnregisterClass(wc.lpszClassName, wc.hInstance);
         return;
     }
+
+    if (hIcon)
+    {
+        SendMessage(hwnd, WM_SETICON, ICON_BIG, (LPARAM)hIcon);
+    }
+    if (hIconSm)
+    {
+        SendMessage(hwnd, WM_SETICON, ICON_SMALL, (LPARAM)hIconSm);
+    }
+
+    SetClassLongPtr(hwnd, GCLP_HICON, (LONG_PTR)hIcon);
+    SetClassLongPtr(hwnd, GCLP_HICONSM, (LONG_PTR)hIconSm);
 
     ShowWindow(hwnd, SW_SHOWDEFAULT);
     UpdateWindow(hwnd);

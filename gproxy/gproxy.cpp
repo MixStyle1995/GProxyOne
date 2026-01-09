@@ -292,10 +292,10 @@ bool sendAll(tcp::socket& socket, const void* buf, size_t len)
 {
 	const char* p = (const char*)buf;
 	size_t sent = 0;
-	while (sent < len)
+	/*while (sent < len)
 	{
 		sent += asio::write(socket, asio::buffer(p + sent, len - sent));
-	}
+	}*/
 	return true;
 }
 
@@ -696,6 +696,76 @@ void RegisterNewAccount(const char* username, const char* password, const char* 
 	}
 }
 
+#define MAPSPEED_SLOW 1
+#define MAPSPEED_NORMAL 2
+#define MAPSPEED_FAST 3
+
+#define MAPVIS_HIDETERRAIN 1
+#define MAPVIS_EXPLORED 2
+#define MAPVIS_ALWAYSVISIBLE 3
+#define MAPVIS_DEFAULT 4
+
+#define MAPOBS_NONE 1
+#define MAPOBS_ONDEFEAT 2
+#define MAPOBS_ALLOWED 3
+#define MAPOBS_REFEREES 4
+
+#define MAPFLAG_TEAMSTOGETHER 1
+#define MAPFLAG_FIXEDTEAMS 2
+#define MAPFLAG_UNITSHARE 4
+#define MAPFLAG_RANDOMHERO 8
+#define MAPFLAG_RANDOMRACES 16
+
+#define MAPOPT_HIDEMINIMAP 1 << 0
+#define MAPOPT_MODIFYALLYPRIORITIES 1 << 1
+#define MAPOPT_MELEE 1 << 2 // the bot cares about this one...
+#define MAPOPT_REVEALTERRAIN 1 << 4
+#define MAPOPT_FIXEDPLAYERSETTINGS 1 << 5 // and this one...
+#define MAPOPT_CUSTOMFORCES 1 << 6        // and this one, the rest don't affect the bot's logic
+#define MAPOPT_CUSTOMTECHTREE 1 << 7
+#define MAPOPT_CUSTOMABILITIES 1 << 8
+#define MAPOPT_CUSTOMUPGRADES 1 << 9
+#define MAPOPT_WATERWAVESONCLIFFSHORES 1 << 11
+#define MAPOPT_WATERWAVESONSLOPESHORES 1 << 12
+
+#define MAPFILTER_MAKER_USER 1
+#define MAPFILTER_MAKER_BLIZZARD 2
+
+#define MAPFILTER_TYPE_MELEE 1
+#define MAPFILTER_TYPE_SCENARIO 2
+
+#define MAPFILTER_SIZE_SMALL 1
+#define MAPFILTER_SIZE_MEDIUM 2
+#define MAPFILTER_SIZE_LARGE 4
+
+#define MAPFILTER_OBS_FULL 1
+#define MAPFILTER_OBS_ONDEATH 2
+#define MAPFILTER_OBS_NONE 4
+
+#define MAPGAMETYPE_UNKNOWN0 1 // always set except for saved games?
+#define MAPGAMETYPE_BLIZZARD 1 << 3
+#define MAPGAMETYPE_MELEE 1 << 5
+#define MAPGAMETYPE_SAVEDGAME 1 << 9
+#define MAPGAMETYPE_PRIVATEGAME 1 << 11
+#define MAPGAMETYPE_MAKERUSER 1 << 13
+#define MAPGAMETYPE_MAKERBLIZZARD 1 << 14
+#define MAPGAMETYPE_TYPEMELEE 1 << 15
+#define MAPGAMETYPE_TYPESCENARIO 1 << 16
+#define MAPGAMETYPE_SIZESMALL 1 << 17
+#define MAPGAMETYPE_SIZEMEDIUM 1 << 18
+#define MAPGAMETYPE_SIZELARGE 1 << 19
+#define MAPGAMETYPE_OBSFULL 1 << 20
+#define MAPGAMETYPE_OBSONDEATH 1 << 21
+#define MAPGAMETYPE_OBSNONE 1 << 22
+
+inline std::vector<uint8_t> CreateByteArray(const uint32_t i, bool reverse)
+{
+	if (!reverse)
+		return std::vector<uint8_t>{static_cast<uint8_t>(i), static_cast<uint8_t>(i >> 8), static_cast<uint8_t>(i >> 16), static_cast<uint8_t>(i >> 24)};
+	else
+		return std::vector<uint8_t>{static_cast<uint8_t>(i >> 24), static_cast<uint8_t>(i >> 16), static_cast<uint8_t>(i >> 8), static_cast<uint8_t>(i)};
+}
+
 void Process_Command( )
 {
 	string Command = gInputBuffer;
@@ -729,6 +799,71 @@ void Process_Command( )
 	{
 		gGProxy->m_Quit = true;
 		return;
+	}
+	else if (Command == "#cf")
+	{
+		const char* maps[] = {
+				"Maps\\FrozenThrone\\(12)IceCrown.w3x",
+				"Maps\\FrozenThrone\\(8)Terenas_Stand.w3x",
+				"Maps\\FrozenThrone\\(4)TwistedMeadows.w3x",
+				"Maps\\Download\\DotA v6.88.w3x",
+				"Maps\\(12)EmeraldGardens.w3m"
+		};
+
+		const char* games[] = 
+		{
+			"Game1",
+			"Game11",
+			"Game111",
+			"Game1111",
+			"Game11111"
+		};
+
+		const char* hosts[] = {
+			"Player1",
+			"ProGamer",
+			"TestHost",
+			"WarCraft3",
+			"MapMaker"
+		};
+
+		const char* hostsowner[] = {
+			"Aliaavsdv",
+			"Beatrizsdv",
+			"Charlessdv",
+			"Diyavsds",
+			"Ericsdvsdv"
+		};
+
+		for (int i = 0; i < 5; i++)
+		{
+			vector<uint8_t> MapWidth;
+			MapWidth.push_back(192);
+			MapWidth.push_back(7);
+			vector<uint8_t> MapHeight;
+			MapHeight.push_back(192);
+			MapHeight.push_back(7);
+
+			uint32_t GameType = MAPGAMETYPE_MAKERUSER | MAPGAMETYPE_TYPESCENARIO | MAPGAMETYPE_SIZELARGE | MAPGAMETYPE_OBSNONE;
+			uint32_t GameFlags = 0x00000002 | 0x00000800 | 0x00002000 | 0x04000000;
+
+			uint32_t uniqueHostCounter = ((uint32_t)time(NULL) + i) | (i << 24);
+
+			std::vector<uint8_t>	m_MapCRC = UTIL_ExtractNumbers("108 250 204 59", 4);
+			std::vector<uint8_t>	m_MapSHA1 = UTIL_ExtractNumbers("35 81 104 182 223 63 204 215 1 17 87 234 220 66 3 185 82 99 6 13", 20);
+			gGProxy->m_BNET->m_Socket->PutBytes(gGProxy->m_BNET->m_Protocol->SEND_SID_STARTADVEX3(
+				GAME_PUBLIC, CreateByteArray(GameType, false), CreateByteArray(GameFlags, false), MapWidth, MapHeight, games[i], hosts[i], hostsowner[i], 0, maps[i], m_MapCRC, m_MapSHA1, uniqueHostCounter, 12, 10));
+
+			CONSOLE_Print(u8"[BNET] " + string(hosts[i]) + string(games[i]), dye_light_purple);
+		}
+
+		//gGProxy->m_BNET->m_Socket->PutBytes(gGProxy->m_BNET->m_Protocol->SEND_SID_REQUEST_GAME_LIST());
+		//CONSOLE_Print(u8"[BNET] Send REQUEST_GAME_LIST", dye_light_purple);
+	}
+	else if (Command == "#test")
+	{
+		gGProxy->m_BNET->m_Socket->PutBytes(gGProxy->m_BNET->m_Protocol->SEND_SID_REQUEST_GAME_LIST());
+		CONSOLE_Print(u8"[BNET] Send REQUEST_GAME_LIST", dye_light_purple);
 	}
 	else if (Command == "#rf")
 	{
@@ -1048,7 +1183,7 @@ int main(int argc, char **argv)
 
 CGProxy :: CGProxy( string nHosts, string nUDPBindIP, uint16_t nUDPPort, uint16_t nGUIPort, bool nUDPConsole, bool nPublicGames, bool nFilterGProxy, string nUDPPassword, string nUDPTrigger, bool nTFT, string nWar3Path, string nCDKeyROC, string nCDKeyTFT, string nServer, string nUsername, string nPassword, string nChannel, uint32_t nWar3Version, uint16_t nPort, BYTEARRAY nEXEVersion, BYTEARRAY nEXEVersionHash, string nPasswordHashType )
 {
-	m_Version = "3.0 (20/11/2025) chỉnh sửa bởi Thái Sơn";
+	m_Version = "3.2 New - chỉnh sửa bởi Thái Sơn";
 	m_LocalServer = new CTCPServer( );
 	m_LocalSocket = NULL;
 	m_RemoteSocket = new CTCPClient( );
