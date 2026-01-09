@@ -1,0 +1,2 @@
+- GProxyOne++ Mod/Chỉnh sửa bời mình (Thái Son).
+- Loại bỏ giao diện cũ, thay = giao diện ImGUI mới nhất.
