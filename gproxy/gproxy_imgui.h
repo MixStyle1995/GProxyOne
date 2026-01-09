@@ -34,12 +34,6 @@ struct PvPGNGameInfo
     PvPGNGameInfo() : currentPlayers(0), maxPlayers(0) {}
 };
 
-extern std::vector<PvPGNGameInfo> gParsedGames;
-extern std::string gGamesRawOutput;
-extern bool gWaitingForGames;
-extern uint32_t gGamesStartTime;
-void ParseGamesOutput(const std::string& output);
-
 // ImGui console functions
 bool CreateDeviceD3D(HWND hWnd);
 void CleanupDeviceD3D();

@@ -61,12 +61,12 @@ public:
 	string m_Country;								// country
 	vector<GameInfo> m_GameList;
 	uint32_t m_TotalGames;
+	string m_Server;								// battle.net server to connect to
+	string m_ServerIP;								// battle.net server to connect to (the IP address so we don't have to resolve it every time we connect)
 private:
 //	CBNLSClient *m_BNLSClient;						// the BNLS client (for external warden handling)
 	queue<CCommandPacket *> m_Packets;				// queue of incoming packets	
 	queue<BYTEARRAY> m_OutPackets;					// queue of outgoing packets to be sent (to prevent getting kicked for flooding)
-	string m_Server;								// battle.net server to connect to
-	string m_ServerIP;								// battle.net server to connect to (the IP address so we don't have to resolve it every time we connect)
 	string m_BNLSServer;							// BNLS server to connect to (for warden handling)
 	uint16_t m_BNLSPort;							// BNLS port
 	uint32_t m_BNLSWardenCookie;					// BNLS warden cookie

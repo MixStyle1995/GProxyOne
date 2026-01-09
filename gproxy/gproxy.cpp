@@ -85,7 +85,7 @@ bool gChannelWindowChanged = false;
 string gLogFile;
 CGProxy *gGProxy = NULL;
 
-uint32_t War3Version = 24;
+uint32_t War3Version = 28;
 bool          gRestart = false;
 
 string szIpUpFileAuraBot;
@@ -128,23 +128,6 @@ void LOG_Print( string message )
 void CONSOLE_Print( string message, int color, bool log, int tsline)
 {
 	CONSOLE_PrintNoCRLF( message, color, log, tsline);
-
-	if (gWaitingForGames) {
-		gGamesRawOutput += message;
-
-		uint32_t currentTime = GetTime();
-		if (currentTime - gGamesStartTime > 5) {
-			ParseGamesOutput(gGamesRawOutput);
-			gGamesRawOutput.clear();
-		}
-		else if (message.find("Total:") != std::string::npos ||
-			message.find("total:") != std::string::npos ||
-			message.find("games displayed") != std::string::npos ||
-			message.find("No games") != std::string::npos) {
-			ParseGamesOutput(gGamesRawOutput);
-			gGamesRawOutput.clear();
-		}
-	}
 
 	if (!gCurses)
 		cout << endl;
@@ -666,13 +649,11 @@ void RegisterNewAccount(const char* username, const char* password, const char* 
 		{
 			if (!gGProxy->m_BNET->m_Socket->HasError() && gGProxy->m_BNET->m_Socket->GetConnected())
 			{
-				//	MessageBoxA( 0, "SendRegisterPacket 4", "ALL", 0 );
-
 				BYTEARRAY buildpacket = BYTEARRAY();
 				uint32_t packetid = 0;
 				UTIL_AppendByteArray(buildpacket, packetid, 4);
-				UTIL_AppendByteArrayFast(buildpacket, string(username));		// Account Name
-				UTIL_AppendByteArrayFast(buildpacket, string(password));		// Account Name
+				UTIL_AppendByteArrayFast(buildpacket, string(username));	// Account Name
+				UTIL_AppendByteArrayFast(buildpacket, string(password));	// Account Name
 				UTIL_AppendByteArrayFast(buildpacket, string(email));		// Account Name
 				gGProxy->m_BNET->m_Socket->PutBytes(gGProxy->m_BNET->m_Protocol->SEND_SID_WC3_CLIENT(buildpacket));
 			}
@@ -802,7 +783,7 @@ void Process_Command( )
 	}
 	else if (Command == "#cf")
 	{
-		const char* maps[] = {
+		/*const char* maps[] = {
 				"Maps\\FrozenThrone\\(12)IceCrown.w3x",
 				"Maps\\FrozenThrone\\(8)Terenas_Stand.w3x",
 				"Maps\\FrozenThrone\\(4)TwistedMeadows.w3x",
@@ -855,15 +836,15 @@ void Process_Command( )
 				GAME_PUBLIC, CreateByteArray(GameType, false), CreateByteArray(GameFlags, false), MapWidth, MapHeight, games[i], hosts[i], hostsowner[i], 0, maps[i], m_MapCRC, m_MapSHA1, uniqueHostCounter, 12, 10));
 
 			CONSOLE_Print(u8"[BNET] " + string(hosts[i]) + string(games[i]), dye_light_purple);
-		}
+		}*/
 
 		//gGProxy->m_BNET->m_Socket->PutBytes(gGProxy->m_BNET->m_Protocol->SEND_SID_REQUEST_GAME_LIST());
 		//CONSOLE_Print(u8"[BNET] Send REQUEST_GAME_LIST", dye_light_purple);
 	}
 	else if (Command == "#test")
 	{
-		gGProxy->m_BNET->m_Socket->PutBytes(gGProxy->m_BNET->m_Protocol->SEND_SID_REQUEST_GAME_LIST());
-		CONSOLE_Print(u8"[BNET] Send REQUEST_GAME_LIST", dye_light_purple);
+		//gGProxy->m_BNET->m_Socket->PutBytes(gGProxy->m_BNET->m_Protocol->SEND_SID_REQUEST_GAME_LIST());
+		//CONSOLE_Print(u8"[BNET] Send REQUEST_GAME_LIST", dye_light_purple);
 	}
 	else if (Command == "#rf")
 	{
@@ -1030,7 +1011,7 @@ int main(int argc, char **argv)
 	string Username;
 	string Password;
 	string Channel;
-	uint16_t Port = 6125;
+	uint16_t Port = 6175;
 	BYTEARRAY EXEVersion;
 	BYTEARRAY EXEVersionHash;
 	string PasswordHashType;
@@ -1050,12 +1031,12 @@ int main(int argc, char **argv)
 	Server = CFG.GetString( "server", string( ) );
 	Username = CFG.GetString( "username", string( ) );
 	Password = CFG.GetString( "password", string( ) );
-	Channel = CFG.GetString( "channel", string( ) );
+	Channel = CFG.GetString( "channel", "Warcraft 3 Frozen Throne");
 	War3Version = CFG.GetInt( "war3version", War3Version );
 	Port = CFG.GetInt( "port", Port );
 	EXEVersion = (BYTEARRAY)0;
 	EXEVersionHash = (BYTEARRAY)0;
-	PasswordHashType = CFG.GetString( "passwordhashtype", string( ) );
+	PasswordHashType = CFG.GetString("passwordhashtype", "pvpgn");
 	UDPBindIP = CFG.GetString( "udp_cmdbindip", "0.0.0.0" );
 	UDPPort = CFG.GetInt( "udp_cmdport", 6959  );
 	GUIPort = CFG.GetInt( "udp_guiport", 5858  );
@@ -1092,15 +1073,6 @@ int main(int argc, char **argv)
 		CFG.ReplaceKeyValue("password", Password);
 	}
 
-	if (!CFG.Exists("channel"))
-	{
-		CONSOLE_PrintNoCRLF(u8"  Channel: ", dye_light_yellow, false);
-		getline(cin, Channel);
-		if (Channel.empty())
-			Channel = "Warcraft 3 Frozen Throne";
-		CFG.ReplaceKeyValue("channel", Channel);
-	}
-
 	CONSOLE_Print("", 0, false);
 	CONSOLE_Print("  Welcome to GProxy.", 0, false);
 	CONSOLE_Print("  Server: " + Server, 0, false);
@@ -1122,7 +1094,7 @@ int main(int argc, char **argv)
 	
 	gGProxy = new CGProxy( Hosts, UDPBindIP, UDPPort, GUIPort, UDPConsole, PublicGames, FilterGProxy, UDPPassword, UDPTrigger, !CDKeyTFT.empty( ), War3Path, CDKeyROC, CDKeyTFT, Server, Username, Password, Channel, War3Version, Port, EXEVersion, EXEVersionHash, PasswordHashType );
 
-	if (War3Version == 28)
+	if (gGProxy->m_War3Version == 28)
 	{
 		CreateThread(NULL, 0, InjectThread, NULL, 0, NULL);
 	}

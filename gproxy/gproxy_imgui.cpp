@@ -18,10 +18,13 @@
 #include <tchar.h>
 #include <thread>
 #include <mutex>
+#include <atomic>
 #include <windows.h>
+#include <wininet.h>
 #include <sstream>
 
 #pragma comment(lib, "d3d9.lib")
+#pragma comment(lib, "wininet.lib")
 
 // Globals
 LPDIRECT3D9              g_pD3D = NULL;
@@ -55,6 +58,20 @@ int selectedWar3Version = 0; // 0=1.24, 1=1.26, 2=1.27, 3=1.28, 4=1.29, 5=1.31
 static bool settingsInitialized = false;
 static bool showPassword = false;  // Toggle for password visibility
 
+// Register popup variables
+static bool showRegisterPopup = false;
+static char regUsernameBuffer[256] = "";
+static char regPasswordBuffer[256] = "";
+static char regPasswordConfirmBuffer[256] = "";
+static char regEmailBuffer[256] = "";
+static bool regShowPassword = false;
+static std::atomic<bool> g_RegisterInProgress(false);
+static std::string g_RegisterResultMessage = "";
+static bool g_RegisterSuccess = false;
+static bool g_RegisterResultReady = false;
+static std::string g_PopupMessage = "";  // Message hiển thị trong popup
+static int g_PopupMessageType = 0;       // 0=none, 1=success, 2=error, 3=info
+
 // BETTER COLORS - NO GRAY!
 ImVec4 GetColorFromPair(int color_pair)
 {
@@ -78,6 +95,136 @@ ImVec4 GetColorFromPair(int color_pair)
     case dye_bright_white:  return ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
     default:                return ImVec4(0.95f, 0.95f, 0.95f, 1.0f);  // Almost white
     }
+}
+
+// ============================================================================
+// REGISTER API FUNCTIONS
+// ============================================================================
+struct RegisterResult {
+    bool success;
+    std::string message;
+    int code;
+};
+
+RegisterResult CallRegisterAPI(const std::string& serverIP,
+    const std::string& username,
+    const std::string& password,
+    const std::string& email)
+{
+    RegisterResult result = { false, "", 0 };
+
+    // Build POST data
+    std::string postData = "username=" + username + "&password=" + password;
+    if (!email.empty()) {
+        postData += "&email=" + email;
+    }
+
+    // Initialize WinINet
+    HINTERNET hInternet = InternetOpenA("GProxy/1.0", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
+    if (!hInternet) {
+        result.message = "Failed to initialize Internet connection";
+        return result;
+    }
+
+    // Connect to server
+    HINTERNET hConnect = InternetConnectA(hInternet, serverIP.c_str(), 80, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
+    if (!hConnect) {
+        InternetCloseHandle(hInternet);
+        result.message = "Failed to connect to server";
+        return result;
+    }
+
+    // Create HTTP request
+    const char* acceptTypes[] = { "application/json", "*/*", NULL };
+    HINTERNET hRequest = HttpOpenRequestA(hConnect, "POST", "/webregister/api_register.php",
+        NULL, NULL, acceptTypes,
+        INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE, 0);
+    if (!hRequest) {
+        InternetCloseHandle(hConnect);
+        InternetCloseHandle(hInternet);
+        result.message = "Failed to create HTTP request";
+        return result;
+    }
+
+    // Set headers and send request
+    const char* headers = "Content-Type: application/x-www-form-urlencoded\r\n";
+    BOOL bSent = HttpSendRequestA(hRequest, headers, (DWORD)strlen(headers),
+        (LPVOID)postData.c_str(), (DWORD)postData.length());
+
+    if (!bSent) {
+        InternetCloseHandle(hRequest);
+        InternetCloseHandle(hConnect);
+        InternetCloseHandle(hInternet);
+        result.message = "Failed to send request";
+        return result;
+    }
+
+    // Read response
+    char buffer[4096];
+    DWORD bytesRead = 0;
+    std::string response;
+
+    while (InternetReadFile(hRequest, buffer, sizeof(buffer) - 1, &bytesRead) && bytesRead > 0) {
+        buffer[bytesRead] = '\0';
+        response += buffer;
+    }
+
+    // Get HTTP status code
+    DWORD statusCode = 0;
+    DWORD statusCodeSize = sizeof(statusCode);
+    HttpQueryInfoA(hRequest, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER,
+        &statusCode, &statusCodeSize, NULL);
+    result.code = (int)statusCode;
+
+    // Cleanup
+    InternetCloseHandle(hRequest);
+    InternetCloseHandle(hConnect);
+    InternetCloseHandle(hInternet);
+
+    // Parse JSON response
+    if (response.find("\"success\":true") != std::string::npos ||
+        response.find("\"success\": true") != std::string::npos) {
+        result.success = true;
+    }
+
+    // Extract message from JSON
+    size_t msgStart = response.find("\"message\":\"");
+    if (msgStart != std::string::npos) {
+        msgStart += 11;
+        size_t msgEnd = response.find("\"", msgStart);
+        if (msgEnd != std::string::npos) {
+            result.message = response.substr(msgStart, msgEnd - msgStart);
+        }
+    }
+
+    // Default messages
+    if (result.message.empty()) {
+        if (result.success) {
+            result.message = "Account created successfully!";
+        }
+        else if (result.code == 409) {
+            result.message = "Username already exists!";
+        }
+        else if (result.code == 400) {
+            result.message = "Invalid input data!";
+        }
+        else {
+            result.message = "Registration failed (HTTP " + std::to_string(result.code) + ")";
+        }
+    }
+
+    return result;
+}
+
+void RegisterThreadFunc(std::string serverIP, std::string username,
+    std::string password, std::string email)
+{
+    RegisterResult result = CallRegisterAPI(serverIP, username, password, email);
+
+    g_RegisterSuccess = result.success;
+    g_RegisterResultMessage = result.message;
+    g_RegisterResultReady = true;
+    g_RegisterInProgress = false;
 }
 
 bool CreateDeviceD3D(HWND hWnd)
@@ -192,103 +339,6 @@ void ShutdownImGuiConsole()
     g_ImGuiInitialized = false;
 }
 
-// Global variables cho game list
-std::vector<PvPGNGameInfo> gParsedGames;
-std::string gGamesRawOutput;
-bool gWaitingForGames = false;
-uint32_t gGamesStartTime = 0;
-
-// Helper functions
-std::string TrimString(const std::string& str) {
-    size_t first = str.find_first_not_of(" \t\r\n");
-    if (first == std::string::npos) return "";
-    size_t last = str.find_last_not_of(" \t\r\n");
-    return str.substr(first, last - first + 1);
-}
-
-PvPGNGameInfo ParseGameLine(const std::string& line)
-{
-    PvPGNGameInfo info;
-
-    try
-    {
-        size_t startPos = line.find_first_not_of("0123456789. \t");
-        if (startPos == std::string::npos) return info;
-
-        size_t openParen = line.find('(', startPos);
-        if (openParen == std::string::npos) return info;
-
-        info.gameName = TrimString(line.substr(startPos, openParen - startPos));
-
-        size_t closeParen = line.find(')', openParen);
-        if (closeParen == std::string::npos) return info;
-
-        info.hostName = TrimString(line.substr(openParen + 1, closeParen - openParen - 1));
-
-        std::string remaining = line.substr(closeParen + 1);
-
-        size_t slotPos = remaining.find_first_of("0123456789");
-        if (slotPos == std::string::npos) return info;
-
-        info.mapName = TrimString(remaining.substr(0, slotPos));
-
-        size_t slashPos = remaining.find('/', slotPos);
-        if (slashPos != std::string::npos) {
-            std::string currentStr = TrimString(remaining.substr(slotPos, slashPos - slotPos));
-            info.currentPlayers = std::stoi(currentStr);
-
-            size_t spaceAfter = remaining.find_first_of(" \t", slashPos + 1);
-
-            if (spaceAfter != std::string::npos) {
-                std::string maxStr = remaining.substr(slashPos + 1, spaceAfter - slashPos - 1);
-                info.maxPlayers = std::stoi(TrimString(maxStr));
-                info.status = TrimString(remaining.substr(spaceAfter + 1));
-            }
-            else {
-                std::string maxStr = TrimString(remaining.substr(slashPos + 1));
-                info.maxPlayers = std::stoi(maxStr);
-                info.status = "Waiting";
-            }
-        }
-
-    }
-    catch (...)
-    {
-        return PvPGNGameInfo();
-    }
-
-    return info;
-}
-
-void ParseGamesOutput(const std::string& output)
-{
-    gParsedGames.clear();
-
-    std::istringstream stream(output);
-    std::string line;
-
-    while (std::getline(stream, line))
-    {
-        if (line.empty() ||
-            line.find("Games list") != std::string::npos ||
-            line.find("games list") != std::string::npos ||
-            line.find("---") != std::string::npos ||
-            line.find("===") != std::string::npos ||
-            line.find("Total:") != std::string::npos ||
-            line.find("total:") != std::string::npos) {
-            continue;
-        }
-
-        PvPGNGameInfo gameInfo = ParseGameLine(line);
-        if (!gameInfo.gameName.empty())
-        {
-            gParsedGames.push_back(gameInfo);
-        }
-    }
-
-    gWaitingForGames = false;
-}
-
 void CreateUpdaterBat()
 {
     std::ofstream bat("update.bat", std::ios::out | std::ios::trunc);
@@ -347,12 +397,12 @@ string GetGameStatusString(t_game_status status)
 {
     switch (status)
     {
-        case game_status_started:   return u8"Đang chơi";    // game_status_started
-        case game_status_full:      return u8"Đầy";          // game_status_full
-        case game_status_open:      return u8"Chờ";          // game_status_open
-        case game_status_loaded:    return u8"Đang tải";     // game_status_loaded
-        case game_status_done:      return u8"Kết thúc";     // game_status_done
-        default:                    return u8"Không rõ";     // Unknown
+    case game_status_started:   return u8"Đang chơi";    // game_status_started
+    case game_status_full:      return u8"Đầy";          // game_status_full
+    case game_status_open:      return u8"Chờ";          // game_status_open
+    case game_status_loaded:    return u8"Đang tải";     // game_status_loaded
+    case game_status_done:      return u8"Kết thúc";     // game_status_done
+    default:                    return u8"Không rõ";     // Unknown
     }
 }
 
@@ -535,7 +585,7 @@ void RenderImGuiConsole()
                 // Initialize buffers with current values (only once)
                 if (!settingsInitialized)
                 {
-                    strcpy(serverBuffer, CFG.GetString("server", string()).c_str());
+                    strcpy(serverBuffer, CFG.GetString("server", "160.187.146.137").c_str());
                     strcpy(usernameBuffer, CFG.GetString("username", string()).c_str());
                     strcpy(passwordBuffer, CFG.GetString("password", string()).c_str());
 
@@ -585,11 +635,13 @@ void RenderImGuiConsole()
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.35f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.4f, 0.4f, 0.45f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.25f, 0.25f, 0.3f, 1.0f));
-                if (ImGui::Button(showPassword ? "(o)" : "(-)", ImVec2(40, 0))) {
+                if (ImGui::Button(showPassword ? "(o)" : "(-)", ImVec2(40, 0)))
+                {
                     showPassword = !showPassword;
                 }
                 ImGui::PopStyleColor(3);
-                if (ImGui::IsItemHovered()) {
+                if (ImGui::IsItemHovered())
+                {
                     ImGui::SetTooltip(showPassword ? "Hide password" : "Show password");
                 }
 
@@ -606,12 +658,14 @@ void RenderImGuiConsole()
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.2f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.8f, 0.3f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.6f, 0.15f, 1.0f));
-                if (ImGui::Button("Connect", ImVec2(130, 28)))
+                if (ImGui::Button("Connect", ImVec2(100, 28)))
                 {
                     gGProxy->m_Server = serverBuffer;
                     gGProxy->m_Username = usernameBuffer;
                     gGProxy->m_Password = passwordBuffer;
                     gGProxy->m_Port = (uint16_t)portBuffer;
+                    gGProxy->m_BNET->m_Server = serverBuffer;
+                    gGProxy->m_BNET->m_ServerIP = serverBuffer;
                     gGProxy->m_BNET->m_UserName = usernameBuffer;
                     gGProxy->m_BNET->m_UserPassword = passwordBuffer;
                     gGProxy->m_BNET->m_BNCSUtil->Reset(usernameBuffer, passwordBuffer);
@@ -637,9 +691,206 @@ void RenderImGuiConsole()
                 ImGui::PopStyleColor(3);
 
                 ImGui::SameLine();
+
+                // Register Button - Opens popup
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.9f, 0.55f, 0.1f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.65f, 0.2f, 1.0f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.8f, 0.45f, 0.05f, 1.0f));
+                if (ImGui::Button("Register", ImVec2(100, 28)))
+                {
+                    // Reset form
+                    strcpy(regUsernameBuffer, "");
+                    strcpy(regPasswordBuffer, "");
+                    strcpy(regPasswordConfirmBuffer, "");
+                    strcpy(regEmailBuffer, "");
+                    g_PopupMessage = "";
+                    g_PopupMessageType = 0;
+                    showRegisterPopup = true;
+                    ImGui::OpenPopup(u8"Đăng ký tài khoản");
+                }
+                ImGui::PopStyleColor(3);
+                if (ImGui::IsItemHovered()) {
+                    ImGui::SetTooltip(u8"Đăng ký tài khoản mới");
+                }
+
+                ImGui::SameLine();
                 ImGui::Checkbox("Public Games", &gGProxy->m_PublicGames);
                 ImGui::SameLine();
                 ImGui::Checkbox("Filter GProxy++", &gGProxy->m_FilterGProxy);
+
+                // ============================================
+                // REGISTER POPUP MODAL
+                // ============================================
+                ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+                ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+                ImGui::SetNextWindowSize(ImVec2(420, 320));
+
+                if (ImGui::BeginPopupModal(u8"Đăng ký tài khoản", &showRegisterPopup, ImGuiWindowFlags_NoResize))
+                {
+                    ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f), u8"Server: %s", serverBuffer);
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    // Username
+                    ImGui::Text("Username:");
+                    ImGui::SameLine(100);
+                    ImGui::PushItemWidth(-10);
+                    ImGui::InputText("##RegUsername", regUsernameBuffer, sizeof(regUsernameBuffer));
+                    ImGui::PopItemWidth();
+
+                    // Password
+                    ImGui::Text("Password:");
+                    ImGui::SameLine(100);
+                    ImGui::PushItemWidth(-50);
+                    ImGui::InputText("##RegPassword", regPasswordBuffer, sizeof(regPasswordBuffer),
+                        regShowPassword ? 0 : ImGuiInputTextFlags_Password);
+                    ImGui::PopItemWidth();
+                    ImGui::SameLine();
+                    if (ImGui::Button(regShowPassword ? "(o)" : "(-)", ImVec2(35, 0))) {
+                        regShowPassword = !regShowPassword;
+                    }
+
+                    // Confirm Password
+                    ImGui::Text(u8"Xác nhận:");
+                    ImGui::SameLine(100);
+                    ImGui::PushItemWidth(-10);
+                    ImGui::InputText("##RegPasswordConfirm", regPasswordConfirmBuffer, sizeof(regPasswordConfirmBuffer),
+                        regShowPassword ? 0 : ImGuiInputTextFlags_Password);
+                    ImGui::PopItemWidth();
+
+                    // Email
+                    ImGui::Text("Email:");
+                    ImGui::SameLine(100);
+                    ImGui::PushItemWidth(-10);
+                    ImGui::InputText("##RegEmail", regEmailBuffer, sizeof(regEmailBuffer));
+                    ImGui::PopItemWidth();
+
+                    ImGui::Spacing();
+                    ImGui::Separator();
+
+                    // Check register result from thread
+                    if (g_RegisterResultReady) {
+                        g_RegisterResultReady = false;
+                        g_PopupMessage = g_RegisterResultMessage;
+                        if (g_RegisterSuccess) {
+                            g_PopupMessageType = 1; // Success
+                            g_PopupMessage = u8"Đăng ký thành công! Bạn có thể đăng nhập ngay.";
+                            // Copy username/password to login form
+                            strcpy(usernameBuffer, regUsernameBuffer);
+                            strcpy(passwordBuffer, regPasswordBuffer);
+                            CFG.ReplaceKeyValue("username", usernameBuffer);
+                            CFG.ReplaceKeyValue("password", passwordBuffer);
+                        }
+                        else {
+                            g_PopupMessageType = 2; // Error
+                        }
+                    }
+
+                    // ===== FIXED MESSAGE AREA =====
+                    ImGui::BeginChild("##MessageArea", ImVec2(-1, 45), false);
+                    if (g_RegisterInProgress.load()) {
+                        // Loading
+                        ImGui::Spacing();
+                        ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), u8"⏳ Đang xử lý...");
+                    }
+                    else if (!g_PopupMessage.empty()) {
+                        ImGui::Spacing();
+                        if (g_PopupMessageType == 1) {
+                            // Success - Green
+                            ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), u8"✓ %s", g_PopupMessage.c_str());
+                        }
+                        else if (g_PopupMessageType == 2) {
+                            // Error - Red
+                            ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), u8"✗ %s", g_PopupMessage.c_str());
+                        }
+                    }
+                    ImGui::EndChild();
+
+                    ImGui::Separator();
+                    ImGui::Spacing();
+
+                    // ===== CENTERED BUTTONS (FIXED POSITION) =====
+                    float buttonWidth = 120.0f;
+                    float buttonSpacing = 20.0f;
+                    float totalButtonsWidth = buttonWidth * 2 + buttonSpacing;
+                    float windowWidth = ImGui::GetWindowSize().x;
+                    float startX = (windowWidth - totalButtonsWidth) * 0.5f;
+
+                    ImGui::SetCursorPosX(startX);
+
+                    bool canRegister = !g_RegisterInProgress.load();
+                    if (!canRegister) ImGui::BeginDisabled();
+
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.2f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.8f, 0.3f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.6f, 0.15f, 1.0f));
+
+                    if (ImGui::Button(u8"Đăng ký", ImVec2(buttonWidth, 32)))
+                    {
+                        std::string regUser = regUsernameBuffer;
+                        std::string regPass = regPasswordBuffer;
+                        std::string regPassConfirm = regPasswordConfirmBuffer;
+                        std::string regEmail = regEmailBuffer;
+                        std::string regServer = serverBuffer;
+
+                        bool valid = true;
+                        g_PopupMessage = "";
+                        g_PopupMessageType = 0;
+
+                        if (regUser.empty()) {
+                            g_PopupMessage = u8"Vui lòng nhập Username!";
+                            g_PopupMessageType = 2;
+                            valid = false;
+                        }
+                        else if (regUser.length() < 2) {
+                            g_PopupMessage = u8"Username phải có ít nhất 2 ký tự!";
+                            g_PopupMessageType = 2;
+                            valid = false;
+                        }
+                        else if (regPass.empty()) {
+                            g_PopupMessage = u8"Vui lòng nhập Password!";
+                            g_PopupMessageType = 2;
+                            valid = false;
+                        }
+                        else if (regPass.length() < 6) {
+                            g_PopupMessage = u8"Password phải có ít nhất 6 ký tự!";
+                            g_PopupMessageType = 2;
+                            valid = false;
+                        }
+                        else if (regPass != regPassConfirm) {
+                            g_PopupMessage = u8"Mật khẩu xác nhận không khớp!";
+                            g_PopupMessageType = 2;
+                            valid = false;
+                        }
+
+                        if (valid) {
+                            g_RegisterInProgress = true;
+                            g_RegisterResultReady = false;
+                            g_PopupMessage = "";
+                            g_PopupMessageType = 0;
+
+                            std::thread regThread(RegisterThreadFunc, regServer, regUser, regPass, regEmail);
+                            regThread.detach();
+                        }
+                    }
+                    ImGui::PopStyleColor(3);
+
+                    if (!canRegister) ImGui::EndDisabled();
+
+                    ImGui::SameLine(0, buttonSpacing);
+
+                    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+                    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+                    if (ImGui::Button(u8"Đóng", ImVec2(buttonWidth, 32)))
+                    {
+                        showRegisterPopup = false;
+                        ImGui::CloseCurrentPopup();
+                    }
+                    ImGui::PopStyleColor(3);
+
+                    ImGui::EndPopup();
+                }
 
                 ImGui::EndChild();
                 ImGui::EndGroup();
@@ -759,6 +1010,29 @@ void RenderImGuiConsole()
                 }
                 ImGui::PopStyleColor(3);
 
+                ImGui::SameLine();
+                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.35f, 0.35f, 1.00f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.45f, 0.45f, 1.00f));
+                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.75f, 0.25f, 0.25f, 1.00f));
+                if (ImGui::Button("Unhost", ImVec2(80, 0)))
+                {
+                    if (strlen(botNameBuffer) <= 0)
+                    {
+                        CONSOLE_Print("[ERROR] Please enter Bot name!", dye_light_red);
+                    }
+                    else if (strlen(botMapBuffer) <= 0)
+                    {
+                        CONSOLE_Print("[ERROR] Please enter Map name!", dye_light_red);
+                    }
+                    else
+                    {
+                        string command = "/w " + string(botNameBuffer) + " !unhost";
+                        gInputBuffer = command;
+                        CONSOLE_Print("[HOST] Sending command to " + string(botNameBuffer) + ": !unhost", dye_light_blue);
+                    }
+                }
+                ImGui::PopStyleColor(3);
+
                 ImGui::EndChild();
                 ImGui::EndGroup();
             }
@@ -796,13 +1070,15 @@ void RenderImGuiConsole()
                 if (gGProxy && gGProxy->m_BNET)
                 {
                     gGProxy->m_BNET->m_TotalGames = 0;
-					gGProxy->m_BNET->m_GameList.clear();
+                    gGProxy->m_BNET->m_GameList.clear();
                     gGProxy->m_BNET->m_Socket->PutBytes(gGProxy->m_BNET->m_Protocol->SEND_SID_REQUEST_GAME_LIST());
                 }
             }
 
             ImGui::SameLine();
+            ImGui::SetWindowFontScale(1.3f);
             ImGui::Text("Total Games: %d", gGProxy->m_BNET->m_TotalGames);
+            ImGui::SetWindowFontScale(1.0f);
 
             ImGui::Separator();
             ImGui::Spacing();
@@ -813,14 +1089,14 @@ void RenderImGuiConsole()
             {
                 ImGui::Columns(8, "gameColumns");
 
-                ImGui::SetColumnWidth(0, 80.0f);  
-                ImGui::SetColumnWidth(1, 220.0f); 
+                ImGui::SetColumnWidth(0, 80.0f);
+                ImGui::SetColumnWidth(1, 220.0f);
                 ImGui::SetColumnWidth(2, 130.0f);
                 ImGui::SetColumnWidth(3, 130.0f);
-                ImGui::SetColumnWidth(4, 370.0f); 
-                ImGui::SetColumnWidth(5, 80.0f);  
-                ImGui::SetColumnWidth(6, 80.0f);  
-                ImGui::SetColumnWidth(7, 140.0f);  
+                ImGui::SetColumnWidth(4, 370.0f);
+                ImGui::SetColumnWidth(5, 80.0f);
+                ImGui::SetColumnWidth(6, 80.0f);
+                ImGui::SetColumnWidth(7, 140.0f);
 
                 ImGui::Separator();
 
@@ -837,7 +1113,7 @@ void RenderImGuiConsole()
                 ImGui::Separator();
 
                 for (auto& game : gGProxy->m_BNET->m_GameList)
-                { 
+                {
                     //// Game Id
                     //ImGui::Text("%d", game.game_id);
                     //ImGui::NextColumn();
@@ -850,11 +1126,11 @@ void RenderImGuiConsole()
                     TextCentered(game.game_name);
                     ImGui::NextColumn();
 
-					// bot name
+                    // bot name
                     ImGui::TextColored(ImVec4(1.0f, 0.7f, 0.3f, 1.0f), "%s", game.host_name);
                     ImGui::NextColumn();
 
-					// host name
+                    // host name
                     std::string hostName = game.host_name;
                     ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f), "%s", game.owner_host_name);
                     ImGui::NextColumn();
@@ -871,7 +1147,7 @@ void RenderImGuiConsole()
                     ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.6f, 1.0f), "%s", GetGameStatusString((t_game_status)game.game_status).c_str());
                     ImGui::NextColumn();
 
-					// IP/Port
+                    // IP/Port
                     ImGui::TextColored(ImVec4(0.0f, 0.8f, 1.0f, 1.0f), "%s", game.IP_Port);
                     ImGui::NextColumn();
 
@@ -882,11 +1158,9 @@ void RenderImGuiConsole()
             }
             else
             {
-                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.6f, 1.0f),
-                    "No games found.");
+                ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.6f, 1.0f), "No games found.");
                 ImGui::Spacing();
-                ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f),
-                    "Click 'Refresh Game List' to load available games.");
+                ImGui::TextColored(ImVec4(0.8f, 0.8f, 0.8f, 1.0f), "Click 'Refresh Game List' to load available games.");
             }
 
             ImGui::EndChild();
@@ -894,14 +1168,6 @@ void RenderImGuiConsole()
         }
 
         ImGui::EndTabBar();
-    }
-
-    if (gWaitingForGames) {
-        uint32_t currentTime = GetTime();
-        if (currentTime - gGamesStartTime > 5) {
-            ParseGamesOutput(gGamesRawOutput);
-            gGamesRawOutput.clear();
-        }
     }
 
     ImGui::End();

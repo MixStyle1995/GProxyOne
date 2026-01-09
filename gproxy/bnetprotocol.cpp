@@ -1016,8 +1016,8 @@ BYTEARRAY CBNETProtocol::SEND_SID_WC3_CLIENT(BYTEARRAY data)
 	unsigned char Cookie[] = { 0, 0, 0, 0 };
 
 	BYTEARRAY packet;
-	packet.push_back(BNET_HEADER_CONSTANT);	// BNET header constant
-	packet.push_back(SID_WC3_CLIENT);		// SID_CLANMEMBERLIST
+	packet.push_back(BNET_HEADER_CONSTANT);		// BNET header constant
+	packet.push_back(SID_WC3_CLIENT);			// SID_CLANMEMBERLIST
 	packet.push_back(0);						// packet length will be assigned later
 	packet.push_back(0);						// packet length will be assigned later
 
