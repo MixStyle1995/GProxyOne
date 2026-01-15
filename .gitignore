@@ -8,6 +8,9 @@
 *.framework
 /gproxy/Release/
 /bncsutil/vc8_build/Release/
+/gproxy/Obuscate.hpp
+Obuscate.hpp
+obuscate.hpp
 
 # OS generated files #
 ######################

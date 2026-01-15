@@ -16,6 +16,9 @@
     <Filter Include="ImGUI">
       <UniqueIdentifier>{ca92945d-44f4-4f48-a034-213e597b0a8f}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Jass">
+      <UniqueIdentifier>{a8bdc739-9147-4bce-9802-2cc7505ae62e}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="bncsutilinterface.cpp">
@@ -78,6 +81,18 @@
     <ClCompile Include="textselect.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="gproxy_map.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="MapUploadAPI.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="crc32.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="sha1.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="CMDNSScanner.h">
@@ -125,8 +140,29 @@
     <ClInclude Include="textselect.hpp">
       <Filter>Source Files</Filter>
     </ClInclude>
-    <ClInclude Include="resource1.h">
+    <ClInclude Include="gproxy_map.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="MapUploadAPI.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="json.hpp">
       <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="stb_image.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="crc32.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="sha1.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Include.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="resource1.h">
+      <Filter>Resource Files</Filter>
     </ClInclude>
   </ItemGroup>
   <ItemGroup>
@@ -138,5 +174,25 @@
     <Image Include="icon.ico">
       <Filter>Resource Files</Filter>
     </Image>
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="common-129.j">
+      <Filter>Jass</Filter>
+    </None>
+    <None Include="common-131.j">
+      <Filter>Jass</Filter>
+    </None>
+    <None Include="blizzard-129.j">
+      <Filter>Jass</Filter>
+    </None>
+    <None Include="blizzard-131.j">
+      <Filter>Jass</Filter>
+    </None>
+    <None Include="common.j">
+      <Filter>Jass</Filter>
+    </None>
+    <None Include="blizzard.j">
+      <Filter>Jass</Filter>
+    </None>
   </ItemGroup>
 </Project>

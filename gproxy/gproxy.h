@@ -19,60 +19,7 @@
 #ifndef GPROXY_H
 #define GPROXY_H
 
-// standard integer sizes for 64 bit compatibility
-
-#ifdef WIN32
- #include <stdint.h>
-#endif
-
-#define IDI_ICON1                       101
-#define IDI_APPICON                     101
-
-// Next default values for new objects
-// 
-#ifdef APSTUDIO_INVOKED
-#ifndef APSTUDIO_READONLY_SYMBOLS
-#define _APS_NEXT_RESOURCE_VALUE        102
-#define _APS_NEXT_COMMAND_VALUE         40001
-#define _APS_NEXT_CONTROL_VALUE         1001
-#define _APS_NEXT_SYMED_VALUE           101
-#endif
-#endif
-
-// STL
-
-#include <fstream>
-#include <iostream>
-#include <sstream>
-#include <iomanip>
-#include <algorithm>
-#include <map>
-#include <queue>
-#include <set>
-#include <string>
-#include <vector>
-#include <mutex>
-
-using namespace std;
-
-typedef vector<unsigned char> BYTEARRAY;
-
-#define dye_black			0
-#define dye_blue			1
-#define dye_green			2
-#define dye_aqua			3
-#define dye_red				4
-#define dye_purple			5
-#define dye_yellow			6
-#define dye_white			7
-#define dye_grey			8
-#define dye_light_blue		9
-#define dye_light_green		10
-#define dye_light_aqua		11
-#define dye_light_red		12
-#define dye_light_purple	13
-#define dye_light_yellow	14
-#define dye_bright_white	15
+#include "Include.h"
 
 #include "config.h"
 
@@ -250,5 +197,6 @@ extern string gInputBuffer;
 // ImGui thread management
 extern std::thread* g_ImGuiThread;
 extern CGProxy* gGProxy;
+string GGetUserName();
 
 #endif

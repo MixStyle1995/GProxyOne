@@ -30,6 +30,39 @@
 #include <fcntl.h>
 #include <io.h>
 
+std::mutex g_LogMutex;
+
+void WriteLog(const char* fmt, ...)
+{
+	std::lock_guard<std::mutex> lock(g_LogMutex);
+
+	char msg[1024];
+
+	va_list args;
+	va_start(args, fmt);
+	vsnprintf_s(msg, sizeof(msg), _TRUNCATE, fmt, args);
+	va_end(args);
+
+	std::ofstream file("app.log", std::ios::app);
+	if (!file.is_open())
+		return;
+
+	std::time_t t = std::time(nullptr);
+	std::tm tm{};
+	localtime_s(&tm, &t);
+
+	char timebuf[32];
+	strftime(timebuf, sizeof(timebuf), "%Y-%m-%d %H:%M:%S", &tm);
+
+	file << "[" << timebuf << "] " << msg << "\n";
+}
+
+std::string ETS_HASH(const std::string& input)
+{
+	//Ham nay khong public
+	return "";
+}
+
 BYTEARRAY UTIL_CreateByteArray( unsigned char *a, int size )
 {
 	if( size < 1 )

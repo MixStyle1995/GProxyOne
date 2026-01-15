@@ -19,6 +19,8 @@
 #ifndef SOCKET_H
 #define SOCKET_H
 
+#pragma warning(push)
+#pragma warning(disable: 4005)
  #include <winsock2.h>
  //#include <errno.h>
 
@@ -203,5 +205,5 @@ public:
 	virtual bool Bind( string address, uint16_t port );
 	virtual void RecvFrom( fd_set *fd, struct sockaddr_in *sin, string *message );
 };
-
+#pragma warning(pop)
 #endif

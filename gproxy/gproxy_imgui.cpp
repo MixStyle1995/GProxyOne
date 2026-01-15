@@ -1,5 +1,8 @@
 ﻿#pragma comment(linker, "/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup")
 
+#define STB_IMAGE_IMPLEMENTATION
+#include "stb_image.h"
+
 #include "gproxy.h"
 #include "util.h"
 #include "socket.h"
@@ -10,21 +13,26 @@
 #include "gpsprotocol.h"
 #include "gproxy_imgui.h"
 #include "bncsutilinterface.h"
+#include "gproxy_map.h"
+#include "resource1.h"
+#include "MapUploadAPI.h"
 
 #include <d3d9.h>
 #include <imgui.h>
 #include <backends/imgui_impl_win32.h>
 #include <backends/imgui_impl_dx9.h>
+#include <imgui_internal.h>
 #include <tchar.h>
 #include <thread>
 #include <mutex>
 #include <atomic>
 #include <windows.h>
-#include <wininet.h>
 #include <sstream>
+#include <unordered_map>
 
 #pragma comment(lib, "d3d9.lib")
-#pragma comment(lib, "wininet.lib")
+
+void InitDonateQR();
 
 // Globals
 LPDIRECT3D9              g_pD3D = NULL;
@@ -48,11 +56,13 @@ static bool showConsoleWindow = false;
 static HWND g_ConsoleWindow = NULL;
 
 // Input buffers for connection settings
-static char serverBuffer[256] = "";
+char serverBuffer[256] = "";
 static char usernameBuffer[256] = "";
 static char passwordBuffer[256] = "";
-static char botNameBuffer[256] = "";  // Bot name for host command
-static char botMapBuffer[256] = "";
+static char botNameBuffer[256] = ""; 
+static char botAPINameBuffer[256] = "";
+char botMapBuffer[256] = "";
+char botAPIMapBuffer[256] = "";
 static int portBuffer = 6112;
 int selectedWar3Version = 0; // 0=1.24, 1=1.26, 2=1.27, 3=1.28, 4=1.29, 5=1.31
 static bool settingsInitialized = false;
@@ -69,8 +79,18 @@ static std::atomic<bool> g_RegisterInProgress(false);
 static std::string g_RegisterResultMessage = "";
 static bool g_RegisterSuccess = false;
 static bool g_RegisterResultReady = false;
-static std::string g_PopupMessage = "";  // Message hiển thị trong popup
-static int g_PopupMessageType = 0;       // 0=none, 1=success, 2=error, 3=info
+std::string g_PopupMessage = "";  // Message hiển thị trong popup
+int g_PopupMessageType = 0;       // 0=none, 1=success, 2=error, 3=info
+bool TabHostAPI = false;
+
+static char g_GoogleDriveLinkBuffer[512] = "";
+static int g_SelectedWar3VersionForLink = 3; // Default 1.28
+static bool g_ShowUploadLinkPopup = false;
+
+const char* war3Versions[] = { "1.24", "1.26", "1.27", "1.28", "1.29", "1.31" };
+int32_t nwar3Versions[] = { 24, 26, 27, 28, 29, 31 };
+
+LPDIRECT3DTEXTURE9 g_JpgTexture = nullptr;
 
 // BETTER COLORS - NO GRAY!
 ImVec4 GetColorFromPair(int color_pair)
@@ -97,6 +117,145 @@ ImVec4 GetColorFromPair(int color_pair)
     }
 }
 
+static std::string comboPreview = "Select bot";
+static int currentBot = -1;
+static bool botSynced = false;
+
+enum BotStatus
+{
+    BOT_UNKNOWN,
+    BOT_ONLINE,
+    BOT_OFFLINE
+};
+
+BotStatus ParseBotStatus(const std::string& s)
+{
+    if (s.find("(online)") != std::string::npos)
+        return BOT_ONLINE;
+    if (s.find("(offline)") != std::string::npos)
+        return BOT_OFFLINE;
+    return BOT_UNKNOWN;
+}
+
+std::string StripBotStatus(const std::string& s)
+{
+    size_t p = s.find(" (");
+    return (p != std::string::npos) ? s.substr(0, p) : s;
+}
+
+static MapUploadAPI* g_HostAPI = nullptr;
+
+static std::vector<std::string> g_AdminList;
+static std::mutex g_AdminListMutex;
+static std::atomic<bool> g_AdminListLoading{ false };
+
+static std::vector<std::string> g_BotList;
+static std::mutex g_BotListMutex;
+static std::atomic<bool> g_BotListLoading{ false };
+
+void InitHostAPI()
+{
+    if (!g_HostAPI)
+        g_HostAPI = new MapUploadAPI();
+}
+
+void LoadAdminListAsync()
+{
+    if (g_AdminListLoading) return;
+    g_AdminListLoading = true;
+
+    std::thread([]()
+    {
+        InitHostAPI();
+        json adminList = g_HostAPI->GetAdminList();
+        {
+            std::lock_guard<std::mutex> lock(g_AdminListMutex);
+            g_AdminList.clear();
+
+            if (adminList.is_array())
+            {
+                for (const auto& admin : adminList)
+                {
+                    g_AdminList.push_back(admin.get<std::string>());
+                }
+            }
+        }
+
+        g_AdminListLoading = false;
+    }).detach();
+}
+
+void LoadBotListAsync()
+{
+    if (g_BotListLoading) return;
+    g_BotListLoading = true;
+
+    std::thread([]()
+    {
+        InitHostAPI();
+        json botList = g_HostAPI->GetBotList();
+        {
+            std::lock_guard<std::mutex> lock(g_BotListMutex);
+            g_BotList.clear();
+
+            if (botList.is_array())
+            {
+                for (const auto& bot : botList)
+                {
+                    string botname = bot["name"].get<std::string>() + (bot["status"].get<std::string>() == "online" ? " (online)" : " (offline)");
+                    g_BotList.push_back(botname);
+                }
+            }
+        }
+
+        g_BotListLoading = false;
+        botSynced = false;
+    }).detach();
+}
+
+void SyncBotFromConfig()
+{
+    if (botAPINameBuffer[0] == '\0')
+        return;
+
+    for (size_t i = 0; i < g_BotList.size(); i++)
+    {
+        std::string name = StripBotStatus(g_BotList[i]);
+
+        if (_stricmp(name.c_str(), botAPINameBuffer) == 0)
+        {
+            currentBot = i;
+            comboPreview = name;
+            return;
+        }
+    }
+
+    currentBot = -1;
+    comboPreview = "Select bot";
+}
+
+bool ComboFromStringVector(const char* label, int* current, const std::vector<std::string>& items)
+{
+    auto getter = [](void* data, int idx, const char** out_text)
+        {
+            auto& v = *(std::vector<std::string>*)data;
+            *out_text = v[idx].c_str();
+            return true;
+        };
+
+    return ImGui::Combo(label, current, getter, (void*)&items, items.size());
+}
+
+bool IsAdminUser(const std::string& szuser)
+{
+    for (const auto& user : g_AdminList)
+    {
+        if (szuser == user)
+            return true;
+    }
+    return false;
+}
+
 // ============================================================================
 // REGISTER API FUNCTIONS
 // ============================================================================
@@ -106,109 +265,92 @@ struct RegisterResult {
     int code;
 };
 
-RegisterResult CallRegisterAPI(const std::string& serverIP,
-    const std::string& username,
-    const std::string& password,
-    const std::string& email)
+static size_t WriteCallback(void* contents, size_t size, size_t nmemb, void* userp)
+{
+    ((std::string*)userp)->append((char*)contents, size * nmemb);
+    return size * nmemb;
+}
+
+RegisterResult CallRegisterAPI(const std::string& serverIP, const std::string& username, const std::string& password, const std::string& email)
 {
     RegisterResult result = { false, "", 0 };
 
-    // Build POST data
+    CURL* curl = curl_easy_init();
+    if (!curl) 
+    {
+        result.message = "Failed to initialize CURL";
+        return result;
+    }
+
     std::string postData = "username=" + username + "&password=" + password;
     if (!email.empty()) {
         postData += "&email=" + email;
     }
 
-    // Initialize WinINet
-    HINTERNET hInternet = InternetOpenA("GProxy/1.0", INTERNET_OPEN_TYPE_DIRECT, NULL, NULL, 0);
-    if (!hInternet) {
-        result.message = "Failed to initialize Internet connection";
-        return result;
-    }
+    std::string url = "http://" + serverIP + "/webregister/api_register.php";
 
-    // Connect to server
-    HINTERNET hConnect = InternetConnectA(hInternet, serverIP.c_str(), 80, NULL, NULL, INTERNET_SERVICE_HTTP, 0, 0);
-    if (!hConnect) {
-        InternetCloseHandle(hInternet);
-        result.message = "Failed to connect to server";
-        return result;
-    }
-
-    // Create HTTP request
-    const char* acceptTypes[] = { "application/json", "*/*", NULL };
-    HINTERNET hRequest = HttpOpenRequestA(hConnect, "POST", "/webregister/api_register.php",
-        NULL, NULL, acceptTypes,
-        INTERNET_FLAG_RELOAD | INTERNET_FLAG_NO_CACHE_WRITE, 0);
-    if (!hRequest) {
-        InternetCloseHandle(hConnect);
-        InternetCloseHandle(hInternet);
-        result.message = "Failed to create HTTP request";
-        return result;
-    }
-
-    // Set headers and send request
-    const char* headers = "Content-Type: application/x-www-form-urlencoded\r\n";
-    BOOL bSent = HttpSendRequestA(hRequest, headers, (DWORD)strlen(headers),
-        (LPVOID)postData.c_str(), (DWORD)postData.length());
-
-    if (!bSent) {
-        InternetCloseHandle(hRequest);
-        InternetCloseHandle(hConnect);
-        InternetCloseHandle(hInternet);
-        result.message = "Failed to send request";
-        return result;
-    }
-
-    // Read response
-    char buffer[4096];
-    DWORD bytesRead = 0;
     std::string response;
 
-    while (InternetReadFile(hRequest, buffer, sizeof(buffer) - 1, &bytesRead) && bytesRead > 0) {
-        buffer[bytesRead] = '\0';
-        response += buffer;
+    curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
+    curl_easy_setopt(curl, CURLOPT_POST, 1L);
+    curl_easy_setopt(curl, CURLOPT_POSTFIELDS, postData.c_str());
+
+    struct curl_slist* headers = NULL;
+    headers = curl_slist_append(headers, "Content-Type: application/x-www-form-urlencoded");
+    headers = curl_slist_append(headers, "Accept: application/json");
+    headers = curl_slist_append(headers, "User-Agent: GProxy/1.0");
+    curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteCallback);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &response);
+
+    curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
+
+    CURLcode res = curl_easy_perform(curl);
+    if (res != CURLE_OK) 
+    {
+        result.message = "Request failed: " + std::string(curl_easy_strerror(res));
+        curl_slist_free_all(headers);
+        curl_easy_cleanup(curl);
+        return result;
     }
 
-    // Get HTTP status code
-    DWORD statusCode = 0;
-    DWORD statusCodeSize = sizeof(statusCode);
-    HttpQueryInfoA(hRequest, HTTP_QUERY_STATUS_CODE | HTTP_QUERY_FLAG_NUMBER,
-        &statusCode, &statusCodeSize, NULL);
+    long statusCode = 0;
+    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &statusCode);
     result.code = (int)statusCode;
 
-    // Cleanup
-    InternetCloseHandle(hRequest);
-    InternetCloseHandle(hConnect);
-    InternetCloseHandle(hInternet);
+    curl_slist_free_all(headers);
+    curl_easy_cleanup(curl);
 
-    // Parse JSON response
-    if (response.find("\"success\":true") != std::string::npos ||
-        response.find("\"success\": true") != std::string::npos) {
+    if (response.find("\"success\":true") != std::string::npos || response.find("\"success\": true") != std::string::npos) 
         result.success = true;
-    }
 
-    // Extract message from JSON
     size_t msgStart = response.find("\"message\":\"");
-    if (msgStart != std::string::npos) {
+    if (msgStart != std::string::npos) 
+    {
         msgStart += 11;
         size_t msgEnd = response.find("\"", msgStart);
-        if (msgEnd != std::string::npos) {
+        if (msgEnd != std::string::npos) 
             result.message = response.substr(msgStart, msgEnd - msgStart);
-        }
     }
 
-    // Default messages
-    if (result.message.empty()) {
-        if (result.success) {
+    if (result.message.empty()) 
+    {
+        if (result.success) 
+        {
             result.message = "Account created successfully!";
         }
-        else if (result.code == 409) {
+        else if (result.code == 409) 
+        {
             result.message = "Username already exists!";
         }
-        else if (result.code == 400) {
+        else if (result.code == 400) 
+        {
             result.message = "Invalid input data!";
         }
-        else {
+        else
+        {
             result.message = "Registration failed (HTTP " + std::to_string(result.code) + ")";
         }
     }
@@ -216,8 +358,7 @@ RegisterResult CallRegisterAPI(const std::string& serverIP,
     return result;
 }
 
-void RegisterThreadFunc(std::string serverIP, std::string username,
-    std::string password, std::string email)
+void RegisterThreadFunc(std::string serverIP, std::string username, std::string password, std::string email)
 {
     RegisterResult result = CallRegisterAPI(serverIP, username, password, email);
 
@@ -255,11 +396,20 @@ void CleanupDeviceD3D()
 
 void ResetDevice()
 {
+    if (g_JpgTexture)
+    {
+        g_JpgTexture->Release();
+        g_JpgTexture = nullptr;
+    }
+
     ImGui_ImplDX9_InvalidateDeviceObjects();
     HRESULT hr = g_pd3dDevice->Reset(&g_d3dpp);
-    if (hr == D3DERR_INVALIDCALL)
+    if (FAILED(hr))
         return;
+
     ImGui_ImplDX9_CreateDeviceObjects();
+
+    InitDonateQR();
 }
 
 void SetupProfessionalStyle()
@@ -326,6 +476,8 @@ void InitImGuiConsole()
     SetupProfessionalStyle();
 
     g_ImGuiInitialized = true;
+
+    InitDonateQR();
 }
 
 void ShutdownImGuiConsole()
@@ -415,6 +567,349 @@ void TextCentered(const char* text)
     ImGui::Text("%s", text);
 }
 
+void ProcessUploadMapLink(const std::string& googleDriveLink, int war3Version)
+{
+    std::string command = "/w ";
+    command += botNameBuffer;
+	command += " !dow";
+	command += std::to_string(nwar3Versions[war3Version]) + " ";
+    command += googleDriveLink;
+
+    gInputBuffer = command;
+}
+
+void RenderUploadMapLinkPopup()
+{
+    // Mở popup khi cần
+    if (g_ShowUploadLinkPopup)
+    {
+        ImGui::OpenPopup("Upload Map Link");
+        g_ShowUploadLinkPopup = false;
+    }
+
+    // Center popup
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(600, 300), ImGuiCond_Appearing);
+
+    if (ImGui::BeginPopupModal("Upload Map Link", NULL, ImGuiWindowFlags_NoResize))
+    {
+        ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), u8"Upload Map từ Google Drive Link");
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Google Drive Link Input
+        ImGui::Text(u8"Google Drive Link:");
+        ImGui::SetNextItemWidth(-1);
+        ImGui::InputTextWithHint("##GoogleDriveLink", "https://drive.google.com/file/d/...", g_GoogleDriveLinkBuffer, 512);
+
+        ImGui::Spacing();
+
+        // War3 Version Dropdown
+        ImGui::Text(u8"Phiên bản Warcraft III:");
+        ImGui::SetNextItemWidth(200);
+        ImGui::Combo("##War3Version", &g_SelectedWar3VersionForLink, war3Versions, IM_ARRAYSIZE(war3Versions));
+
+        ImGui::Spacing();
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        // Help text
+        ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.7f, 0.7f, 0.7f, 1.0f));
+        ImGui::TextWrapped(u8"Lưu ý: Link phải là direct download link từ Google Drive");
+        ImGui::PopStyleColor();
+
+        ImGui::Spacing();
+
+        // Buttons
+        float buttonWidth = 120.0f;
+        float spacing = 10.0f;
+        float totalWidth = buttonWidth * 2 + spacing;
+        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - totalWidth) * 0.5f);
+
+        // Send button
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.8f, 0.5f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.6f, 0.3f, 1.0f));
+
+        bool canSend = strlen(g_GoogleDriveLinkBuffer) > 0;
+        if (!canSend)
+        {
+            ImGui::BeginDisabled(true);
+        }
+
+        if (ImGui::Button("Send", ImVec2(buttonWidth, 35)))
+        {
+            ProcessUploadMapLink(g_GoogleDriveLinkBuffer, g_SelectedWar3VersionForLink);
+
+            // Clear và đóng popup
+            g_GoogleDriveLinkBuffer[0] = '\0';
+            g_SelectedWar3VersionForLink = 3; // Reset về 1.28
+            ImGui::CloseCurrentPopup();
+        }
+
+        if (!canSend)
+        {
+            ImGui::EndDisabled();
+            if (ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+            {
+                ImGui::SetTooltip(u8"Vui lòng nhập Google Drive link");
+            }
+        }
+
+        ImGui::PopStyleColor(3);
+
+        ImGui::SameLine(0, spacing);
+
+        // Cancel button
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+
+        if (ImGui::Button("Cancel", ImVec2(buttonWidth, 35)))
+        {
+            g_GoogleDriveLinkBuffer[0] = '\0';
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::PopStyleColor(3);
+
+        ImGui::EndPopup();
+    }
+}
+
+void ButtonHost(bool hostapi)
+{
+	string cHost = hostapi ? " !hosts " : " !host ";
+
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.8f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.8f, 0.9f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.6f, 0.7f, 1.0f));
+    if (ImGui::Button("Host", ImVec2(70, 0)))
+    {
+        if (strlen(hostapi ? botAPINameBuffer : botNameBuffer) <= 0)
+        {
+            CONSOLE_Print("[ERROR] Please enter Bot name!", dye_light_red);
+        }
+        else if (strlen(hostapi ? botAPIMapBuffer : botMapBuffer) <= 0)
+        {
+            CONSOLE_Print("[ERROR] Please enter Map name!", dye_light_red);
+        }
+        else
+        {
+            string command = "/w " + string(hostapi ? botAPINameBuffer : botNameBuffer) + cHost + string(hostapi ? botAPIMapBuffer : botMapBuffer);
+            gInputBuffer = command;
+        }
+    }
+    ImGui::PopStyleColor(3);
+
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.9f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.6f, 1.0f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.4f, 0.8f, 1.0f));
+    if (ImGui::Button("Host Obs", ImVec2(80, 0)))
+    {
+        if (strlen(hostapi ? botAPINameBuffer : botNameBuffer) <= 0)
+        {
+            CONSOLE_Print("[ERROR] Please enter Bot name!", dye_light_red);
+        }
+        else if (strlen(hostapi ? botAPINameBuffer : botNameBuffer) <= 0)
+        {
+            CONSOLE_Print("[ERROR] Please enter Map name!", dye_light_red);
+        }
+        else
+        {
+            string command = "/w " + string(hostapi ? botAPINameBuffer : botNameBuffer) + cHost + string(hostapi ? botAPIMapBuffer : botMapBuffer);
+            gInputBuffer = command;
+        }
+    }
+    ImGui::PopStyleColor(3);
+
+    ImGui::SameLine();
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.35f, 0.35f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.45f, 0.45f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.75f, 0.25f, 0.25f, 1.00f));
+    if (ImGui::Button("Unhost", ImVec2(80, 0)))
+    {
+        if (strlen(hostapi ? botAPINameBuffer : botNameBuffer) <= 0)
+        {
+            CONSOLE_Print("[ERROR] Please enter Bot name!", dye_light_red);
+        }
+        else
+        {
+            string command = "/w " + string(hostapi ? botAPINameBuffer : botNameBuffer) + " !unhost";
+            gInputBuffer = command;
+            CONSOLE_Print("[HOST] Sending command to " + string(hostapi ? botAPINameBuffer : botNameBuffer) + ": !unhost", dye_light_blue);
+        }
+    }
+    ImGui::PopStyleColor(3);
+
+    if (hostapi == true)
+    {
+        bool isAdmin = IsAdminUser(GGetUserName());
+        if (!isAdmin)
+        {
+            ImGui::BeginDisabled(true);
+        }
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.8f, 0.5f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.6f, 0.3f, 1.0f));
+        if (ImGui::Button("Upload Map"))
+        {
+            ClearMessages();
+            showUploadConfigPopup = true;
+            ImGui::OpenPopup("Upload Map/Config");
+        }
+        if (!isAdmin && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+        {
+            ImGui::SetTooltip(u8"Có trong List Admin Host API\nmới sử dụng được tính năng này");
+        }
+        ImGui::PopStyleColor(3);
+
+        if (!isAdmin)
+        {
+            ImGui::EndDisabled();
+        }
+    }
+    else
+    {
+        ImGui::SameLine();
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.4f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.8f, 0.5f, 1.0f));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.1f, 0.6f, 0.3f, 1.0f));
+        if (ImGui::Button("Upload Map"))
+        {
+            if (strlen(botNameBuffer) <= 0)
+            {
+                CONSOLE_Print("[ERROR] Please enter Bot name!", dye_light_red);
+            }
+            else g_ShowUploadLinkPopup = true;
+        }
+        ImGui::PopStyleColor(3);
+        if (ImGui::IsItemHovered())
+        {
+            ImGui::BeginTooltip();
+            ImGui::Text(u8"Upload map từ Google Drive link");
+            ImGui::EndTooltip();
+        }
+    }
+}
+
+bool AnimatedButton_MirrorSweep(const char* label, ImVec2 size)
+{
+    static std::unordered_map<ImGuiID, float> anim;
+    ImGuiID id = ImGui::GetID(label);
+    float& t = anim[id];
+
+    bool pressed = ImGui::Button(label, size);
+
+    // LẤY RECT THẬT CỦA BUTTON
+    ImVec2 min = ImGui::GetItemRectMin();
+    ImVec2 max = ImGui::GetItemRectMax();
+
+    bool hovered = ImGui::IsItemHovered();
+
+    if (hovered)
+        t += ImGui::GetIO().DeltaTime * 1.0f;
+    else
+        t = 0.0f;
+
+    if (t > 1.2f)
+        t = 0.0f;
+
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+
+    float width = max.x - min.x;
+    float height = max.y - min.y;
+
+    float sweepWidth = width * 0.5f;
+    float x = min.x + (t * (width + sweepWidth)) - sweepWidth;
+
+    dl->PushClipRect(min, max, true);
+
+    ImVec2 smin(x, min.y);
+    ImVec2 smax(x + sweepWidth, max.y);
+
+    dl->AddRectFilledMultiColor(
+        smin,
+        smax,
+        ImColor(1.0f, 1.0f, 1.0f, 0.0f),
+        ImColor(1.0f, 1.0f, 1.0f, 0.7f),
+        ImColor(1.0f, 1.0f, 1.0f, 0.7f),
+        ImColor(1.0f, 1.0f, 1.0f, 0.0f)
+    );
+
+    dl->PopClipRect();
+
+    return pressed;
+}
+
+bool LoadResourceToMemory(int resourceID, const wchar_t* resourceType, unsigned char** data, DWORD* size)
+{
+    HRSRC hRes = FindResourceW(nullptr, MAKEINTRESOURCEW(resourceID), resourceType);
+    if (!hRes) return false;
+
+    HGLOBAL hMem = LoadResource(nullptr, hRes);
+    if (!hMem) return false;
+
+    *size = SizeofResource(nullptr, hRes);
+    *data = (unsigned char*)LockResource(hMem);
+
+    return true;
+}
+
+unsigned char* DecodeJPGFromResource(int resourceID, int* width, int* height)
+{
+    unsigned char* jpgData = nullptr;
+    DWORD jpgSize = 0;
+
+    if (!LoadResourceToMemory(resourceID, L"JPG", &jpgData, &jpgSize))
+        return nullptr;
+
+    int channels = 0;
+    unsigned char* rgba = stbi_load_from_memory(jpgData, jpgSize, width, height, &channels, 4);
+
+    return rgba;
+}
+
+LPDIRECT3DTEXTURE9 CreateTextureFromRGBA(LPDIRECT3DDEVICE9 device, unsigned char* rgba, int width, int height)
+{
+    LPDIRECT3DTEXTURE9 texture = nullptr;
+
+    if (FAILED(device->CreateTexture(width, height, 1, D3DUSAGE_DYNAMIC, D3DFMT_A8R8G8B8, D3DPOOL_DEFAULT, &texture, nullptr)))         
+        return nullptr;
+
+    D3DLOCKED_RECT rect;
+    texture->LockRect(0, &rect, nullptr, 0);
+
+    for (int y = 0; y < height; y++)
+    {
+        memcpy((BYTE*)rect.pBits + y * rect.Pitch, rgba + y * width * 4, width * 4);
+    }
+
+    texture->UnlockRect(0);
+    return texture;
+}
+
+LPDIRECT3DTEXTURE9 LoadJPGTextureFromResource(LPDIRECT3DDEVICE9 device, int resourceID)
+{
+    int w, h;
+    unsigned char* rgba = DecodeJPGFromResource(resourceID, &w, &h);
+    if (!rgba) return nullptr;
+
+    auto tex = CreateTextureFromRGBA(device, rgba, w, h);
+    stbi_image_free(rgba);
+
+    return tex;
+}
+
+void InitDonateQR()
+{
+    if (!g_JpgTexture)
+        g_JpgTexture = LoadJPGTextureFromResource(g_pd3dDevice, IDR_JPG_DONATE);
+}
+
 void RenderImGuiConsole()
 {
     ImGui::SetNextWindowPos(ImVec2(0, 0));
@@ -425,9 +920,44 @@ void RenderImGuiConsole()
     ImGui::Begin("##MainWindow", nullptr, flags);
 
     // Title bar
-    ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "GProxy++ 3.2 New By Thái Sơn");
+    ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "GProxy++ 3.3 New By Thái Sơn");
 
-    ImGui::SameLine(ImGui::GetWindowWidth() - 320);
+    ImGui::SameLine(ImGui::GetWindowWidth() - 450);
+
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.55f, 0.10f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.65f, 0.15f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.75f, 0.45f, 0.08f, 1.0f));
+    if (ImGui::Button("Donate", ImVec2(140, 0)))
+    {
+        ImGui::OpenPopup("DonatePopup");
+    }
+    ImGui::PopStyleColor(3);
+
+    // ==== Donate Popup ====
+    ImGui::SetNextWindowSize(ImVec2(350, 500), ImGuiCond_FirstUseEver);
+
+    if (ImGui::BeginPopupModal("DonatePopup", nullptr, ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_AlwaysAutoResize))
+    {
+        ImGui::TextColored(ImVec4(0.2f, 0.8f, 0.2f, 1.0f), "Support GProxy Project");
+
+        ImGui::Separator();
+        ImGui::Spacing();
+
+        if (g_JpgTexture)
+        {
+            ImGui::Image((ImTextureID)g_JpgTexture, ImVec2(350, 500));
+        }
+
+        // Close button center
+        float btnWidth = 100.0f;
+        ImGui::SetCursorPosX((ImGui::GetContentRegionAvail().x - btnWidth) * 0.5f);
+
+        if (ImGui::Button("Close", ImVec2(btnWidth, 0)))
+            ImGui::CloseCurrentPopup();
+
+        ImGui::EndPopup();
+    }
+    ImGui::SameLine();
 
     ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.2f, 1.0f));
     ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.8f, 0.3f, 1.0f));
@@ -442,6 +972,7 @@ void RenderImGuiConsole()
         }
     }
     ImGui::PopStyleColor(3);
+
 
     /*ImGui::SameLine();
     if (ImGui::Button(showConsoleWindow ? "Hide CMD" : "Show CMD", ImVec2(140, 0)))
@@ -469,7 +1000,7 @@ void RenderImGuiConsole()
     if (ImGui::BeginTabBar("##MainTabs"))
     {
         // Console tab with Channel sidebar and Settings
-        if (ImGui::BeginTabItem("Console"))
+        if (ImGui::BeginTabItem("Chung"))
         {
             // Split: Console (80%) | Channel (20%)
             ImGui::BeginChild("##ConsoleArea", ImVec2(ImGui::GetContentRegionAvail().x * 0.80f, 0), false, ImGuiWindowFlags_NoScrollbar);
@@ -585,12 +1116,20 @@ void RenderImGuiConsole()
                 // Initialize buffers with current values (only once)
                 if (!settingsInitialized)
                 {
+                    InitHostAPI();
+                    LoadAdminListAsync();
+                    LoadBotListAsync();
+
                     strcpy(serverBuffer, CFG.GetString("server", "160.187.146.137").c_str());
                     strcpy(usernameBuffer, CFG.GetString("username", string()).c_str());
                     strcpy(passwordBuffer, CFG.GetString("password", string()).c_str());
 
                     strcpy(botNameBuffer, CFG.GetString("BotName", string()).c_str());
                     strcpy(botMapBuffer, CFG.GetString("BotMap", string()).c_str());
+
+				    strcpy(botAPINameBuffer, CFG.GetString("BotAPIName", string()).c_str());
+                    strcpy(botAPIMapBuffer, CFG.GetString("BotAPIMap", string()).c_str());
+
                     portBuffer = gGProxy->m_Port;
 
                     // Detect current War3 version
@@ -606,26 +1145,27 @@ void RenderImGuiConsole()
                 }
 
                 float totalWidth = ImGui::GetContentRegionAvail().x;
-                float leftWidth = totalWidth * 0.52f;
-                float rightWidth = totalWidth * 0.46f;
+                float leftWidth = totalWidth * 0.48f;
+                float rightWidth = totalWidth * 0.51f;
+                float rightWidth2 = totalWidth * 0.71f;
 
                 // === LEFT SIDE: Connection Settings ===
                 ImGui::BeginGroup();
                 ImGui::BeginChild("##LeftSettings", ImVec2(leftWidth, 175), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
-                ImGui::Text("Server:  ");
+                ImGui::Text("Máy Chủ:  ");
                 ImGui::SameLine();
                 ImGui::PushItemWidth(-10);
                 ImGui::InputText("##Server", serverBuffer, sizeof(serverBuffer));
                 ImGui::PopItemWidth();
 
-                ImGui::Text("Username:");
+                ImGui::Text("Tài Khoản:");
                 ImGui::SameLine();
                 ImGui::PushItemWidth(-10);
                 ImGui::InputText("##Username", usernameBuffer, sizeof(usernameBuffer));
                 ImGui::PopItemWidth();
 
-                ImGui::Text("Password:");
+                ImGui::Text("Mật Khẩu:");
                 ImGui::SameLine();
                 ImGui::PushItemWidth(-57);
                 ImGui::InputText("##Password", passwordBuffer, sizeof(passwordBuffer), showPassword ? 0 : ImGuiInputTextFlags_Password);
@@ -658,7 +1198,7 @@ void RenderImGuiConsole()
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.2f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.8f, 0.3f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.6f, 0.15f, 1.0f));
-                if (ImGui::Button("Connect", ImVec2(100, 28)))
+                if (ImGui::Button("Đăng nhập", ImVec2(100, 28)))
                 {
                     gGProxy->m_Server = serverBuffer;
                     gGProxy->m_Username = usernameBuffer;
@@ -691,12 +1231,17 @@ void RenderImGuiConsole()
                 ImGui::PopStyleColor(3);
 
                 ImGui::SameLine();
+                ImGui::Checkbox("Public Games", &gGProxy->m_PublicGames);
+                //ImGui::SameLine();
+                //ImGui::Checkbox("Filter GProxy++", &gGProxy->m_FilterGProxy);
+
+                ImGui::SameLine();
 
                 // Register Button - Opens popup
                 ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.9f, 0.55f, 0.1f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(1.0f, 0.65f, 0.2f, 1.0f));
                 ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.8f, 0.45f, 0.05f, 1.0f));
-                if (ImGui::Button("Register", ImVec2(100, 28)))
+                if (ImGui::Button("Đăng ký", ImVec2(100, 28)))
                 {
                     // Reset form
                     strcpy(regUsernameBuffer, "");
@@ -709,14 +1254,10 @@ void RenderImGuiConsole()
                     ImGui::OpenPopup(u8"Đăng ký tài khoản");
                 }
                 ImGui::PopStyleColor(3);
-                if (ImGui::IsItemHovered()) {
+                if (ImGui::IsItemHovered()) 
+                {
                     ImGui::SetTooltip(u8"Đăng ký tài khoản mới");
                 }
-
-                ImGui::SameLine();
-                ImGui::Checkbox("Public Games", &gGProxy->m_PublicGames);
-                ImGui::SameLine();
-                ImGui::Checkbox("Filter GProxy++", &gGProxy->m_FilterGProxy);
 
                 // ============================================
                 // REGISTER POPUP MODAL
@@ -732,14 +1273,14 @@ void RenderImGuiConsole()
                     ImGui::Spacing();
 
                     // Username
-                    ImGui::Text("Username:");
+                    ImGui::Text("Tài Khoản:");
                     ImGui::SameLine(100);
                     ImGui::PushItemWidth(-10);
                     ImGui::InputText("##RegUsername", regUsernameBuffer, sizeof(regUsernameBuffer));
                     ImGui::PopItemWidth();
 
                     // Password
-                    ImGui::Text("Password:");
+                    ImGui::Text("Mật Khẩu:");
                     ImGui::SameLine(100);
                     ImGui::PushItemWidth(-50);
                     ImGui::InputText("##RegPassword", regPasswordBuffer, sizeof(regPasswordBuffer),
@@ -751,7 +1292,7 @@ void RenderImGuiConsole()
                     }
 
                     // Confirm Password
-                    ImGui::Text(u8"Xác nhận:");
+                    ImGui::Text(u8"Xác nhận\nMật Khẩu:");
                     ImGui::SameLine(100);
                     ImGui::PushItemWidth(-10);
                     ImGui::InputText("##RegPasswordConfirm", regPasswordConfirmBuffer, sizeof(regPasswordConfirmBuffer),
@@ -788,18 +1329,22 @@ void RenderImGuiConsole()
 
                     // ===== FIXED MESSAGE AREA =====
                     ImGui::BeginChild("##MessageArea", ImVec2(-1, 45), false);
-                    if (g_RegisterInProgress.load()) {
+                    if (g_RegisterInProgress.load()) 
+                    {
                         // Loading
                         ImGui::Spacing();
                         ImGui::TextColored(ImVec4(1.0f, 1.0f, 0.0f, 1.0f), u8"⏳ Đang xử lý...");
                     }
-                    else if (!g_PopupMessage.empty()) {
+                    else if (!g_PopupMessage.empty())
+                    {
                         ImGui::Spacing();
-                        if (g_PopupMessageType == 1) {
+                        if (g_PopupMessageType == 1) 
+                        {
                             // Success - Green
                             ImGui::TextColored(ImVec4(0.2f, 1.0f, 0.2f, 1.0f), u8"✓ %s", g_PopupMessage.c_str());
                         }
-                        else if (g_PopupMessageType == 2) {
+                        else if (g_PopupMessageType == 2) 
+                        {
                             // Error - Red
                             ImGui::TextColored(ImVec4(1.0f, 0.4f, 0.4f, 1.0f), u8"✗ %s", g_PopupMessage.c_str());
                         }
@@ -863,7 +1408,8 @@ void RenderImGuiConsole()
                             valid = false;
                         }
 
-                        if (valid) {
+                        if (valid) 
+                        {
                             g_RegisterInProgress = true;
                             g_RegisterResultReady = false;
                             g_PopupMessage = "";
@@ -899,12 +1445,11 @@ void RenderImGuiConsole()
 
                 // === RIGHT SIDE: War3 Version ===
                 ImGui::BeginGroup();
-                ImGui::BeginChild("##RightSettings", ImVec2(rightWidth, 80), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+                ImGui::BeginChild("##RightSettings", ImVec2(rightWidth, 50), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
-                ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f), "Warcraft III Version");
-                ImGui::Separator();
+               /* ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f), "Warcraft III Version");
+                ImGui::Separator();*/
 
-                const char* war3Versions[] = { "1.24", "1.26", "1.27", "1.28", "1.29", "1.31" };
                 int previousVersion = selectedWar3Version;
 
                 // All 6 items in ONE row
@@ -927,9 +1472,7 @@ void RenderImGuiConsole()
                                 gGProxy->m_BNET->SetTimerReconnect(1);
                                 gGProxy->m_BNET->m_Socket->Disconnect();
                             }
-                            //gGProxy->m_BNET->m_Socket->PutBytes(gGProxy->m_BNET->m_Protocol->SEND_PROTOCOL_INITIALIZE_SELECTOR());
-                            //gGProxy->m_BNET->m_Socket->PutBytes(gGProxy->m_BNET->m_Protocol->SEND_SID_AUTH_INFO(gGProxy->m_War3Version, gGProxy->m_TFT, gGProxy->m_BNET->m_CountryAbbrev, gGProxy->m_BNET->m_Country));
-                            //gGProxy->m_BNET->m_Socket->DoSend((fd_set*)send_fd);
+
                             CONSOLE_Print(u8"[INFO] Đã chọn War3 version " + string(war3Versions[selectedWar3Version]), dye_light_green);
                         }
                     }
@@ -944,96 +1487,146 @@ void RenderImGuiConsole()
                 // === Bot Name and Host Button ===
                 ImGui::Spacing();
 
-                ImGui::BeginChild("##BotControls", ImVec2(rightWidth, 80), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
-
-                ImGui::Text("Bot:");
-                ImGui::SameLine();
-                ImGui::PushItemWidth(170);
-                if (ImGui::InputText("##BotName", botNameBuffer, IM_ARRAYSIZE(botNameBuffer)))
+                if (ImGui::BeginTabBar("##HostTabs"))
                 {
-                    CFG.ReplaceKeyValue("BotName", botNameBuffer);
-                }
-                ImGui::PopItemWidth();
+                    if (ImGui::BeginTabItem("Host"))
+                    {
+                        if (ImGui::IsItemHovered())
+                        {
+                            ImGui::SetTooltip(
+                                "Tạo phòng bằng bot riêng\n"
+                                "host trực tiếp map của bot đó");
+                        }
+                        ImGui::BeginChild("##BotControls", ImVec2(rightWidth, 80), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
 
-                ImGui::SameLine();
+                        ImGui::Text("Bot:");
+                        ImGui::SameLine();
+                        ImGui::PushItemWidth(170);
+                        if (ImGui::InputText("##BotName", botNameBuffer, IM_ARRAYSIZE(botNameBuffer)))
+                        {
+                            CFG.ReplaceKeyValue("BotName", botNameBuffer);
+                        }
+                        ImGui::PopItemWidth();
 
-                ImGui::Text("Map:");
-                ImGui::SameLine();
-                ImGui::PushItemWidth(170);
-                if (ImGui::InputText("##BotMap", botMapBuffer, IM_ARRAYSIZE(botMapBuffer)))
-                {
-                    CFG.ReplaceKeyValue("BotMap", botMapBuffer);
-                }
-                ImGui::PopItemWidth();
-                ImGui::Separator();
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.7f, 0.8f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.8f, 0.9f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.6f, 0.7f, 1.0f));
-                if (ImGui::Button("Host", ImVec2(70, 0)))
-                {
-                    if (strlen(botNameBuffer) <= 0)
-                    {
-                        CONSOLE_Print("[ERROR] Please enter Bot name!", dye_light_red);
-                    }
-                    else if (strlen(botMapBuffer) <= 0)
-                    {
-                        CONSOLE_Print("[ERROR] Please enter Map name!", dye_light_red);
-                    }
-                    else
-                    {
-                        string command = "/w " + string(botNameBuffer) + " !host " + string(botMapBuffer);
-                        gInputBuffer = command;
-                        CONSOLE_Print("[HOST] Sending command to " + string(botNameBuffer) + ": !host", dye_light_blue);
-                    }
-                }
-                ImGui::PopStyleColor(3);
-                ImGui::SameLine();
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.2f, 0.5f, 0.9f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.6f, 1.0f, 1.0f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.4f, 0.8f, 1.0f));
-                if (ImGui::Button("Host Obs", ImVec2(80, 0)))
-                {
-                    if (strlen(botNameBuffer) <= 0)
-                    {
-                        CONSOLE_Print("[ERROR] Please enter Bot name!", dye_light_red);
-                    }
-                    else if (strlen(botMapBuffer) <= 0)
-                    {
-                        CONSOLE_Print("[ERROR] Please enter Map name!", dye_light_red);
-                    }
-                    else
-                    {
-                        string command = "/w " + string(botNameBuffer) + " !host " + string(botMapBuffer);
-                        gInputBuffer = command;
-                        CONSOLE_Print("[HOST] Sending command to " + string(botNameBuffer) + ": !hostobs", dye_light_blue);
-                    }
-                }
-                ImGui::PopStyleColor(3);
+                        ImGui::SameLine();
 
-                ImGui::SameLine();
-                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.35f, 0.35f, 1.00f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.45f, 0.45f, 1.00f));
-                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.75f, 0.25f, 0.25f, 1.00f));
-                if (ImGui::Button("Unhost", ImVec2(80, 0)))
-                {
-                    if (strlen(botNameBuffer) <= 0)
-                    {
-                        CONSOLE_Print("[ERROR] Please enter Bot name!", dye_light_red);
-                    }
-                    else if (strlen(botMapBuffer) <= 0)
-                    {
-                        CONSOLE_Print("[ERROR] Please enter Map name!", dye_light_red);
-                    }
-                    else
-                    {
-                        string command = "/w " + string(botNameBuffer) + " !unhost";
-                        gInputBuffer = command;
-                        CONSOLE_Print("[HOST] Sending command to " + string(botNameBuffer) + ": !unhost", dye_light_blue);
-                    }
-                }
-                ImGui::PopStyleColor(3);
+                        ImGui::Text("Map:");
+                        ImGui::SameLine();
+                        ImGui::PushItemWidth(170);
+                        if (ImGui::InputText("##BotMap", botMapBuffer, IM_ARRAYSIZE(botMapBuffer)))
+                        {
+                            CFG.ReplaceKeyValue("BotMap", botMapBuffer);
+                        }
+                        ImGui::PopItemWidth();
+                        ImGui::Separator();
 
-                ImGui::EndChild();
+                        ButtonHost(false);
+                        RenderUploadMapLinkPopup();
+
+                        if (TabHostAPI == true)
+                        {
+                            TabHostAPI = false;
+                            g_AdminList.clear();
+                        }
+
+                        ImGui::EndChild();
+                        ImGui::EndTabItem();
+                    }
+
+                    if (ImGui::BeginTabItem("Host API"))
+                    {
+                        if (TabHostAPI == false)
+                        {
+                            TabHostAPI = true;
+                            LoadAdminListAsync();
+                        }
+
+                        if (ImGui::IsItemHovered())
+                        {
+                            ImGui::SetTooltip(
+                                "Tạo phòng thông qua hệ thống API\n"
+                                "sử dụng kho map tập trung từ máy chủ");
+                        }
+
+                        ImGui::BeginChild("##BotAPIControls", ImVec2(rightWidth, 80), true, ImGuiWindowFlags_NoScrollbar | ImGuiWindowFlags_NoScrollWithMouse);
+
+                        if (!g_BotListLoading && !botSynced && !g_BotList.empty())
+                        {
+                            SyncBotFromConfig();
+                            botSynced = true;
+                        }
+
+                        ImGui::SetNextItemWidth(170.0f);
+                        if (ImGui::BeginCombo("##BotCombo", comboPreview.c_str()))
+                        {
+                            for (size_t i = 0; i < g_BotList.size(); i++)
+                            {
+                                bool selected = (i == currentBot);
+
+                                BotStatus st = ParseBotStatus(g_BotList[i]);
+
+                                ImVec4 color = (st == BOT_ONLINE) ? ImVec4(0.2f, 1.0f, 0.2f, 1.0f) : (st == BOT_OFFLINE) ? ImVec4(0.6f, 0.6f, 0.6f, 1.0f) : ImVec4(1, 1, 1, 1);
+
+                                std::string name = StripBotStatus(g_BotList[i]);
+
+                                ImGui::PushStyleColor(ImGuiCol_Text, color);
+
+                                if (ImGui::Selectable(name.c_str(), selected))
+                                {
+                                    currentBot = i;
+                                    comboPreview = name;
+
+                                    strcpy_s(botAPINameBuffer, sizeof(botAPINameBuffer), name.c_str());
+                                    CFG.ReplaceKeyValue("BotAPIName", botAPINameBuffer);
+                                    LoadBotListAsync();
+                                }
+
+                                ImGui::PopStyleColor();
+
+                                if (selected)
+                                    ImGui::SetItemDefaultFocus();
+                            }
+                            ImGui::EndCombo();
+                        }
+
+                        ImGui::SameLine();
+                        ImGui::Text("Map:");
+                        ImGui::SameLine();
+                        ImGui::PushItemWidth(220);
+                        if (ImGui::InputText("##BotAPIMap", botAPIMapBuffer, IM_ARRAYSIZE(botAPIMapBuffer), ImGuiInputTextFlags_ReadOnly))
+                        {
+                            CFG.ReplaceKeyValue("BotAPIMap", botAPIMapBuffer);
+                        }
+                        ImGui::PopItemWidth();
+
+                        ImGui::SameLine();
+                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.72f, 0.52f, 0.30f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.82f, 0.62f, 0.38f, 1.0f));
+                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.62f, 0.44f, 0.26f, 1.0f));
+                        if (AnimatedButton_MirrorSweep("Get", ImVec2(0, 0)))
+                        {
+                            ClearMessages();
+                            showChoseMapPopup = true;
+                            ImGui::OpenPopup("Lựa Chọn Map");
+                        }
+                        ImGui::PopStyleColor(3);
+                        if (ImGui::IsItemHovered())
+                        {
+                            ImGui::SetTooltip("Lấy dánh sách Map");
+                        }
+
+                        ImGui::Separator();
+
+                        ButtonHost(true);
+
+                        RenderUploadConfigPopup();
+
+                        ImGui::EndChild();
+                        ImGui::EndTabItem();
+                    }
+
+                    ImGui::EndTabBar();
+				}
                 ImGui::EndGroup();
             }
 
@@ -1041,34 +1634,69 @@ void RenderImGuiConsole()
 
             // Channel sidebar
             ImGui::SameLine();
-
-            ImGui::BeginChild("##ChannelSidebar", ImVec2(0, 0), true);
-
-            ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "Channel");
-            ImGui::Separator();
-
-            ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f), "%s", gChannelName.c_str());
-            ImGui::Text("Users: %d", (int)gChannelUsers.size());
-
-            ImGui::Separator();
-
-            for (const auto& user : gChannelUsers)
+            ImGui::BeginChild("##RightPanel", ImVec2(0, 0), false);
             {
-                ImGui::Bullet();
-                ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f), "%s", user.c_str());
-            }
+                if (ImGui::BeginChild("##ChannelSidebar", ImVec2(0, -210), true))
+                {
+                    ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "Channel");
+                    ImGui::Separator();
 
+                    ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f), "%s", gChannelName.c_str());
+                    ImGui::Text("Users: %d", (int)gChannelUsers.size());
+
+                    ImGui::Separator();
+
+                    for (const auto& user : gChannelUsers)
+                    {
+                        ImGui::Bullet();
+                        ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f), "%s", user.c_str());
+                    }
+                }
+                ImGui::EndChild();
+
+                if (TabHostAPI == true)
+                {
+                    if (ImGui::BeginChild("##AdminAPI", ImVec2(0, 190), true))
+                    {
+                        ImGui::TextColored(ImVec4(0.6f, 0.9f, 1.0f, 1.0f), "List Admin Host API");
+                        ImGui::SameLine();
+                        if (ImGui::Button("Get", ImVec2(0, 0)))
+                        {
+                            LoadAdminListAsync();
+                        }
+                        ImGui::Separator();
+                        ImGui::Text("Total: %d", (int)g_AdminList.size());
+                        ImGui::Separator();
+
+                        float headerHeight = ImGui::GetCursorPosY();
+
+                        float listHeight = 185.0f - headerHeight - 5.0f;
+
+                        if (ImGui::BeginChild("##AdminUserList", ImVec2(0, listHeight), false))
+                        {
+                            for (const auto& user : g_AdminList)
+                            {
+                                ImGui::Bullet();
+                                ImGui::TextColored(ImVec4(0.6f, 1.0f, 0.6f, 1.0f), "%s", user.c_str());
+                            }
+                        }
+                        ImGui::EndChild();
+                    }
+                    ImGui::EndChild();
+                }
+            }
             ImGui::EndChild();
 
             ImGui::EndTabItem();
         }
 
-        if (ImGui::BeginTabItem("Games"))
+        if (ImGui::BeginTabItem("Danh sách Game"))
         {
             if (ImGui::Button("Refresh Game List", ImVec2(180, 35)))
             {
                 if (gGProxy && gGProxy->m_BNET)
                 {
+                    gGProxy->m_BNET->QueueGetGameList(20);
                     gGProxy->m_BNET->m_TotalGames = 0;
                     gGProxy->m_BNET->m_GameList.clear();
                     gGProxy->m_BNET->m_Socket->PutBytes(gGProxy->m_BNET->m_Protocol->SEND_SID_REQUEST_GAME_LIST());
@@ -1178,28 +1806,49 @@ extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND, UINT, WPARAM,
 LRESULT CALLBACK WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     if (ImGui_ImplWin32_WndProcHandler(hWnd, msg, wParam, lParam))
-        return true;
+        return 0;
 
     switch (msg)
     {
-    case WM_DESTROY:
-    case WM_QUIT:
-        gGProxy->m_Quit = true;
+    case WM_ACTIVATEAPP:
+        if (ImGui::GetCurrentContext() != nullptr)
+            ImGui::GetIO().AddFocusEvent(wParam != FALSE);
         break;
 
-    case WM_SIZE:
-        if (g_pd3dDevice != NULL && wParam != SIZE_MINIMIZED)
-        {
-            g_d3dpp.BackBufferWidth = LOWORD(lParam);
-            g_d3dpp.BackBufferHeight = HIWORD(lParam);
-            ResetDevice();
-        }
-        return 0;
+        case WM_DESTROY:
+        case WM_QUIT:
+            gGProxy->m_Quit = true;
+            break;
 
-    case WM_SYSCOMMAND:
-        if ((wParam & 0xfff0) == SC_KEYMENU)
+        case WM_SIZE:
+            if (g_pd3dDevice != NULL && wParam != SIZE_MINIMIZED)
+            {
+                g_d3dpp.BackBufferWidth = LOWORD(lParam);
+                g_d3dpp.BackBufferHeight = HIWORD(lParam);
+                ResetDevice();
+            }
             return 0;
-        break;
+
+        case WM_SYSCOMMAND:
+            if ((wParam & 0xfff0) == SC_KEYMENU)
+                return 0;
+            break;
+        case WM_KEYDOWN:
+        {
+            if (wParam == VK_ESCAPE)
+            {
+                if (showRegisterPopup)
+                {
+                    showRegisterPopup = false;
+                    ImGui::CloseCurrentPopup();
+                    return 0;
+                }
+
+                if (CloseUploadPopup())
+                    return 0;
+            }
+            break;
+        }
     }
 
     return DefWindowProc(hWnd, msg, wParam, lParam);
@@ -1233,7 +1882,7 @@ void GuiThread()
     WNDCLASSEX wc = { sizeof(WNDCLASSEX), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(NULL), NULL, NULL, NULL, NULL, _T("GProxyImGui"), NULL };
     RegisterClassEx(&wc);
 
-    HWND hwnd = CreateWindowEx(WS_EX_APPWINDOW, wc.lpszClassName, _T("GProxy++ 3.2 New"), WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, 50, 50, 1280, 800, NULL, NULL, wc.hInstance, NULL);
+    HWND hwnd = CreateWindowEx(WS_EX_APPWINDOW, wc.lpszClassName, _T("GProxy++ 3.3 New"), WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX, 50, 50, 1280, 800, NULL, NULL, wc.hInstance, NULL);
     if (!CreateDeviceD3D(hwnd))
     {
         CleanupDeviceD3D();
@@ -1263,6 +1912,22 @@ void GuiThread()
     // Font size (14px - compact for 1280x800)
     ImGuiIO& io = ImGui::GetIO();
     io.Fonts->AddFontFromFileTTF("C:\\Windows\\Fonts\\consola.ttf", 15.0f, nullptr, io.Fonts->GetGlyphRangesVietnamese());
+
+    ImFontConfig cfg;
+    cfg.MergeMode = true;
+    cfg.PixelSnapH = true;
+
+    static const ImWchar ranges[] =
+    { 
+        0x2764, 0x2764, // ❤ heart
+        0x2190, 0x21FF, // arrows
+        0x2300, 0x23FF, // technical symbols (⏳ )
+        0x2600, 0x26FF, // misc symbols (☑ ☀ ⚠)
+        0x2700, 0x27BF, // dingbats (✔ ✖)
+        0
+    };
+
+    io.Fonts->AddFontFromFileTTF( "C:\\Windows\\Fonts\\seguisym.ttf", 16.0f, &cfg, ranges);
 
     bool done = false;
     std::string pendingCommand;

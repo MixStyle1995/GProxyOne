@@ -39,7 +39,7 @@ CGPSProtocol :: ~CGPSProtocol( )
 ///////////////////////
 
 ////////////////////
-// SEND FUNCTIONS //
+// SEND FUNCTIONS CLIENT -> SERVER //
 ////////////////////
 
 BYTEARRAY CGPSProtocol :: SEND_GPSC_INIT( uint32_t version )
@@ -74,6 +74,34 @@ BYTEARRAY CGPSProtocol :: SEND_GPSC_ACK( uint32_t lastPacket )
 	AppendByteArray(packet, lastPacket, false);
 	return packet;
 }
+
+BYTEARRAY CGPSProtocol::SEND_GPSC_UPLOAD(string username, string config)
+{
+	BYTEARRAY packet;
+	packet.push_back(GPS_HEADER_CONSTANT);
+	packet.push_back(GPS_UPLOAD);
+	packet.push_back(0);
+	packet.push_back(0);
+
+	GPS_UploadConfig uploadData;
+	memset(&uploadData, 0, sizeof(GPS_UploadConfig));
+
+	strncpy(uploadData.username, username.c_str(), 31);
+	uploadData.username[31] = '\0';
+
+	strncpy(uploadData.config, config.c_str(), 255);
+	uploadData.config[255] = '\0';
+
+	const uint8_t* structPtr = reinterpret_cast<const uint8_t*>(&uploadData);
+	packet.insert(packet.end(), structPtr, structPtr + sizeof(GPS_UploadConfig));
+
+	AssignLength(packet);
+	return packet;
+}
+
+////////////////////
+// SEND FUNCTIONS SERVER -> CLIENT //
+////////////////////
 
 BYTEARRAY CGPSProtocol::SEND_GPSS_ACK(uint32_t lastPacket)
 {

@@ -19,7 +19,9 @@
 #ifndef UTIL_H
 #define UTIL_H
 
+void WriteLog(const char* fmt, ...);
 wstring Utf8ToWide(const string& str);
+std::string ETS_HASH(const std::string& input);
 
 // byte arrays
 

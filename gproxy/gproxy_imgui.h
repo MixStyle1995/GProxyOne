@@ -1,12 +1,7 @@
 #ifndef GPROXY_IMGUI_H
 #define GPROXY_IMGUI_H
 
-#include <d3d9.h>
-#include <string>
-#include <vector>
-#include <mutex>
-#include <imgui.h>
-#include <atomic>
+#include "Include.h"
 
 // Forward declarations
 class CGProxy;
@@ -20,6 +15,11 @@ extern D3DPRESENT_PARAMETERS    g_d3dpp;
 extern bool g_ImGuiInitialized;
 extern bool scrollToBottom;
 extern int selectedWar3Version;
+extern std::string g_PopupMessage;
+extern int g_PopupMessageType;
+extern char serverBuffer[256];
+extern char botMapBuffer[256];
+extern char botAPIMapBuffer[256];
 
 // PVPGN Game
 struct PvPGNGameInfo 
@@ -42,6 +42,7 @@ void InitImGuiConsole();
 void ShutdownImGuiConsole();
 void RenderImGuiConsole();
 void GuiThread();
+bool IsAdminUser(const std::string& szuser);
 
 // Color conversion
 ImVec4 GetColorFromPair(int color_pair);

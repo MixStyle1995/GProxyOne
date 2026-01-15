@@ -75,7 +75,7 @@
     <ClCompile>
       <Optimization>MaxSpeed</Optimization>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <AdditionalIncludeDirectories>..\bncsutil\src;..\pdcurses;..\Bonjour\Include;..\imgui;..\asio;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>..\bncsutil\src;..\pdcurses;..\Bonjour\Include;..\imgui;..\asio;..\Storm;..\cUrl;..\openssl;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;_CRT_SECURE_NO_WARNINGS;_WINSOCK_DEPRECATED_NO_WARNINGS;PDC_WIDE;CHTYPE_32;PDC_FORCE_UTF8;PDC_RGB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <FunctionLevelLinking>true</FunctionLevelLinking>
@@ -90,12 +90,12 @@
     </ClCompile>
     <Link>
       <AdditionalDependencies>ws2_32.lib;winmm.lib;pdcurses.lib;BNCSUtil.lib;dnssd.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>..\pdcurses;..\bncsutil\vc8_build\Release;..\Bonjour\Lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>..\pdcurses;..\bncsutil\vc8_build\Release;..\Bonjour\Lib;..\Storm;..\cUrl;..\openssl;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <GenerateDebugInformation>false</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
       <OptimizeReferences>true</OptimizeReferences>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
-      <DataExecutionPrevention>false</DataExecutionPrevention>
+      <DataExecutionPrevention>true</DataExecutionPrevention>
       <TargetMachine>MachineX86</TargetMachine>
       <LinkTimeCodeGeneration />
       <RandomizedBaseAddress>false</RandomizedBaseAddress>
@@ -115,10 +115,14 @@
     <ClCompile Include="CMDNSScanner.cpp" />
     <ClCompile Include="commandpacket.cpp" />
     <ClCompile Include="config.cpp" />
+    <ClCompile Include="crc32.cpp" />
     <ClCompile Include="gameprotocol.cpp" />
     <ClCompile Include="gproxy.cpp" />
     <ClCompile Include="gproxy_imgui.cpp" />
+    <ClCompile Include="gproxy_map.cpp" />
     <ClCompile Include="gpsprotocol.cpp" />
+    <ClCompile Include="MapUploadAPI.cpp" />
+    <ClCompile Include="sha1.cpp" />
     <ClCompile Include="socket.cpp" />
     <ClCompile Include="textselect.cpp" />
     <ClCompile Include="util.cpp" />
@@ -130,13 +134,20 @@
     <ClInclude Include="CMDNSScanner.h" />
     <ClInclude Include="commandpacket.h" />
     <ClInclude Include="config.h" />
+    <ClInclude Include="crc32.h" />
     <ClInclude Include="gameprotocol.h" />
     <ClInclude Include="gproxy.h" />
     <ClInclude Include="gproxy_imgui.h" />
+    <ClInclude Include="gproxy_map.h" />
     <ClInclude Include="gpsprotocol.h" />
+    <ClInclude Include="Include.h" />
+    <ClInclude Include="json.hpp" />
+    <ClInclude Include="MapUploadAPI.h" />
     <ClInclude Include="Obuscate.hpp" />
     <ClInclude Include="resource1.h" />
+    <ClInclude Include="sha1.h" />
     <ClInclude Include="socket.h" />
+    <ClInclude Include="stb_image.h" />
     <ClInclude Include="textselect.hpp" />
     <ClInclude Include="util.h" />
     <ClInclude Include="util_imgui.h" />
@@ -152,6 +163,14 @@
   </ItemGroup>
   <ItemGroup>
     <Image Include="icon.ico" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="blizzard-129.j" />
+    <None Include="blizzard-131.j" />
+    <None Include="blizzard.j" />
+    <None Include="common-129.j" />
+    <None Include="common-131.j" />
+    <None Include="common.j" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

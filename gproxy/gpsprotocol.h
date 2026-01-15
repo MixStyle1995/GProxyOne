@@ -28,6 +28,14 @@
 #define REJECTGPS_INVALID			1
 #define REJECTGPS_NOTFOUND			2
 
+#pragma pack(1)
+struct GPS_UploadConfig
+{
+	char username[32];
+	char config[256];
+};
+#pragma pack()
+
 class CGPSProtocol
 {
 public:
@@ -35,26 +43,25 @@ public:
 		GPS_INIT				= 1,
 		GPS_RECONNECT			= 2,
 		GPS_ACK					= 3,
-		GPS_REJECT				= 4
+		GPS_REJECT				= 4,
+		GPS_UPLOAD				= 5
 	};
 
 	CGPSProtocol( );
 	~CGPSProtocol( );
 
-	// receive functions
-
-	// send functions
-
+	// Client -> Server
 	BYTEARRAY SEND_GPSC_INIT( uint32_t version );
 	BYTEARRAY SEND_GPSC_RECONNECT( unsigned char PID, uint32_t reconnectKey, uint32_t lastPacket );
 	BYTEARRAY SEND_GPSC_ACK( uint32_t lastPacket );
 
+	BYTEARRAY SEND_GPSC_UPLOAD(string username, string config);
+
+	// Server -> Client
 	BYTEARRAY SEND_GPSS_INIT( uint16_t reconnectPort, unsigned char PID, uint32_t reconnectKey, unsigned char numEmptyActions );
 	BYTEARRAY SEND_GPSS_RECONNECT( uint32_t lastPacket );
 	BYTEARRAY SEND_GPSS_ACK( uint32_t lastPacket );
 	BYTEARRAY SEND_GPSS_REJECT( uint32_t reason );
-
-	// other functions
 
 private:
 	bool AssignLength( BYTEARRAY &content );

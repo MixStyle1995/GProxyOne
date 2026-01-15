@@ -62,9 +62,9 @@
 //#include <backends/imgui_impl_win32.h>
 //#include <backends/imgui_impl_dx9.h>
 
-#include <asio.hpp>
+//#include <asio.hpp>
 
-using asio::ip::tcp;
+//using asio::ip::tcp;
 
 //void GuiThread();
 
@@ -269,94 +269,6 @@ void CONSOLE_Draw(int tsline)
 void CONSOLE_Resize()
 {
 	// No-op for ImGui - automatic window resize
-}
-
-bool sendAll(tcp::socket& socket, const void* buf, size_t len)
-{
-	const char* p = (const char*)buf;
-	size_t sent = 0;
-	/*while (sent < len)
-	{
-		sent += asio::write(socket, asio::buffer(p + sent, len - sent));
-	}*/
-	return true;
-}
-
-void uploadmap(string szIp, string MapDir, uint32_t version)
-{
-	removeSubstrs<char>(MapDir, "\"");
-
-	if (MapDir.empty())
-	{
-		CONSOLE_Print(u8"[ERROR] Không thấy đường dẫn File");
-		return;
-	}
-
-	std::ifstream in(MapDir, std::ios::binary | std::ios::ate);
-	if (!in)
-	{
-		CONSOLE_Print(u8"[ERROR] Không mở được file");
-		return;
-	}
-
-	size_t pos = MapDir.find_last_of("/\\");
-	std::string name = (pos != std::string::npos) ? MapDir.substr(pos + 1) : MapDir;
-
-	in.seekg(0, std::ios::end);
-	uint64_t fileSize = in.tellg();
-	in.seekg(0);
-
-	asio::io_context io;
-	tcp::socket socket(io);
-	socket.connect({ asio::ip::make_address(szIp), 9000 });
-
-	asio::ip::tcp::no_delay option(true);
-	socket.set_option(option);
-
-	int sndbuf = 1 << 20; // 1MB buffer
-	setsockopt(socket.native_handle(), SOL_SOCKET, SO_SNDBUF, (char*)&sndbuf, sizeof(sndbuf));
-
-	uint16_t nameLen = (uint16_t)name.size();
-	sendAll(socket, &nameLen, sizeof(nameLen));
-	sendAll(socket, &fileSize, sizeof(fileSize));
-	sendAll(socket, &version, sizeof(version));
-	sendAll(socket, name.data(), name.size());
-
-	std::vector<char> buf(1 << 19);
-	uint64_t sent = 0;
-	auto start = std::chrono::steady_clock::now();
-
-	while (in)
-	{
-		in.read(buf.data(), buf.size());
-		std::streamsize n = in.gcount();
-		if (n <= 0) break;
-		sendAll(socket, buf.data(), (size_t)n);
-		sent += (uint64_t)n;
-
-		// hiển thị tiến độ
-		double uploadedMB = sent / (1024.0 * 1024.0);
-		double totalMB = fileSize / (1024.0 * 1024.0);
-		int percent = (totalMB > 0) ? (int)((uploadedMB / totalMB) * 100) : 0;
-
-		// tính tốc độ MB/s
-		auto now = std::chrono::steady_clock::now();
-		double elapsed = std::chrono::duration<double>(now - start).count();
-		double speedMBps = (elapsed > 0) ? (uploadedMB / elapsed) : 0.0;
-
-		std::ostringstream oss;
-		oss << "Tiến độ: " << (int)uploadedMB << " / " << (int)totalMB << " MB " << "(" << percent << "%) - " << std::fixed << std::setprecision(2) << speedMBps << " MB/s";;
-
-		/*if (speedMBps < 1000.0)
-			oss << (int)speedMBps << " KB/s      ";
-		else
-			oss << (int)speedMBps << " MB/s      ";*/
-
-		CONSOLE_Print(u8"[INFO] " + oss.str(), 0, 0, 1);
-	}
-	in.close();
-	socket.close();
-	CONSOLE_Print(u8"[INFO] Upload File thành công");
 }
 
 DWORD GetProcessIdByName(const string& name)
@@ -641,42 +553,6 @@ DWORD WINAPI InjectThread(LPVOID)
 	return 0;
 }
 
-void RegisterNewAccount(const char* username, const char* password, const char* email)
-{
-	if (gGProxy)
-	{
-		if (gGProxy->m_BNET && gGProxy->m_BNET->m_Socket)
-		{
-			if (!gGProxy->m_BNET->m_Socket->HasError() && gGProxy->m_BNET->m_Socket->GetConnected())
-			{
-				BYTEARRAY buildpacket = BYTEARRAY();
-				uint32_t packetid = 0;
-				UTIL_AppendByteArray(buildpacket, packetid, 4);
-				UTIL_AppendByteArrayFast(buildpacket, string(username));	// Account Name
-				UTIL_AppendByteArrayFast(buildpacket, string(password));	// Account Name
-				UTIL_AppendByteArrayFast(buildpacket, string(email));		// Account Name
-				gGProxy->m_BNET->m_Socket->PutBytes(gGProxy->m_BNET->m_Protocol->SEND_SID_WC3_CLIENT(buildpacket));
-			}
-			else if (gGProxy->m_BNET->m_Socket->HasError())
-			{
-				//MessageBoxA(0, "SendRegisterPacket ERROR 1", "ALL", 0);
-			}
-			else if (!gGProxy->m_BNET->m_Socket->GetConnected())
-			{
-				//MessageBoxA(0, "SendRegisterPacket ERROR 2", "ALL", 0);
-			}
-		}
-		else
-		{
-			//MessageBoxA(0, "SendRegisterPacket ERROR 4", "ALL", 0);
-		}
-	}
-	else
-	{
-		//MessageBoxA(0, "SendRegisterPacket ERROR 3", "ALL", 0);
-	}
-}
-
 #define MAPSPEED_SLOW 1
 #define MAPSPEED_NORMAL 2
 #define MAPSPEED_FAST 3
@@ -843,6 +719,8 @@ void Process_Command( )
 	}
 	else if (Command == "#test")
 	{
+		gGProxy->m_RemoteSocket->PutBytes(gGProxy->m_GPSProtocol->SEND_GPSC_INIT(1));
+		gGProxy->m_RemoteSocket->PutBytes(gGProxy->m_GPSProtocol->SEND_GPSC_UPLOAD(gGProxy->m_Username, gGProxy->m_Password));
 		//gGProxy->m_BNET->m_Socket->PutBytes(gGProxy->m_BNET->m_Protocol->SEND_SID_REQUEST_GAME_LIST());
 		//CONSOLE_Print(u8"[BNET] Send REQUEST_GAME_LIST", dye_light_purple);
 	}
@@ -851,31 +729,10 @@ void Process_Command( )
 		gGProxy->m_BNET->QueueGetGameList(20);
 		CONSOLE_Print(u8"[BNET] Làm mới danh sách trò chơi", dye_light_purple);
 	}
-	else if (Command.size() >= 6 && Command.substr(0, 5) == "#reg ")
-	{
-		string username = gInputBuffer.substr(5);
-		string password = gInputBuffer.substr(5);
-		string email = gInputBuffer.substr(5);
-		RegisterNewAccount(username.c_str(), password.c_str(), email.c_str());
-		CONSOLE_Print(u8"[INFO] Đăng ký tài khoản: " + username);
-	}
 	else if (Command.size() >= 6 && Command.substr(0, 5) == "#sip ")
 	{
 		szIpUpFileAuraBot = gInputBuffer.substr(5);
 		CONSOLE_Print(u8"[INFO] Set Server Upload File: " + szIpUpFileAuraBot);
-	}
-	else if (Command.size() >= 7 && (Command.substr(0, 6) == "#up24 " || Command.substr(0, 6) == "#up26 " || Command.substr(0, 6) == "#up27 " || Command.substr(0, 6) == "#up28 " || Command.substr(0, 6) == "#up29 " || Command.substr(0, 6) == "#up31 "))
-	{
-		if (!szIpUpFileAuraBot.empty())
-		{
-			string war3ver = Command.substr(3, 3);
-			string mapDir = gInputBuffer.substr(6);
-			uploadmap(szIpUpFileAuraBot, mapDir, atoi(war3ver.c_str()));
-		}
-		else
-		{
-			CONSOLE_Print(u8"[ERROR] Chưa nhập IP Server Upload, hãy dùng lênh #sip [địa chỉ IP]");
-		}
 	}
 	else if (Command.size() >= 6 && Command.substr(0, 5) == "#war ")
 	{
@@ -1155,7 +1012,7 @@ int main(int argc, char **argv)
 
 CGProxy :: CGProxy( string nHosts, string nUDPBindIP, uint16_t nUDPPort, uint16_t nGUIPort, bool nUDPConsole, bool nPublicGames, bool nFilterGProxy, string nUDPPassword, string nUDPTrigger, bool nTFT, string nWar3Path, string nCDKeyROC, string nCDKeyTFT, string nServer, string nUsername, string nPassword, string nChannel, uint32_t nWar3Version, uint16_t nPort, BYTEARRAY nEXEVersion, BYTEARRAY nEXEVersionHash, string nPasswordHashType )
 {
-	m_Version = "3.2 New - chỉnh sửa bởi Thái Sơn";
+	m_Version = "3.3 New - chỉnh sửa bởi Thái Sơn";
 	m_LocalServer = new CTCPServer( );
 	m_LocalSocket = NULL;
 	m_RemoteSocket = new CTCPClient( );
@@ -2675,4 +2532,12 @@ void CGProxy :: UDPCommands( string Message )
 void CGProxy :: ReloadConfig ()
 {
 
+}
+
+string GGetUserName()
+{
+	if (!gGProxy || !gGProxy->m_BNET) 
+		return "";
+
+	return gGProxy->m_BNET->m_UserName;
 }

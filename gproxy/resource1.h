@@ -1,8 +1,16 @@
-//{{NO_DEPENDENCIES}}
-// Microsoft Visual C++ generated include file.
-// Used by gproxy.rc
-//
+#pragma once
+
 #define IDI_ICON1                       101
+#define IDI_APPICON                     101
+
+#define IDR_BLIZZARD_J					102
+#define IDR_COMMON_J					103
+#define IDR_BLIZZARD_129_J				104
+#define IDR_COMMON_129_J				105
+#define IDR_BLIZZARD_131_J				106
+#define IDR_COMMON_131_J				107
+
+#define IDR_JPG_DONATE					222
 
 // Next default values for new objects
 // 
