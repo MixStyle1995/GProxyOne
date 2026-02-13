@@ -26,11 +26,13 @@
 #include "bnet.h"
 #include "gameprotocol.h"
 #include "gpsprotocol.h"
-
+#include "bncsutilinterface.h"
 // Replaced PDcurses with ImGui
 // #include "curses.h"
 #include "gproxy_imgui.h"
 #include "CMDNSScanner.h"
+#include "resource1.h"
+#include "Include.h"
 
 #include <signal.h>
 #include <stdlib.h>
@@ -85,7 +87,6 @@ bool gChannelWindowChanged = false;
 string gLogFile;
 CGProxy *gGProxy = NULL;
 
-uint32_t War3Version = 28;
 bool          gRestart = false;
 
 string szIpUpFileAuraBot;
@@ -450,177 +451,451 @@ HANDLE WriteAccountToSharedMemory(const std::string& text)
 	return ptr;
 }
 
+HANDLE g_InjectThreadHandle = NULL;
+volatile bool g_InjectThreadRunning = false;
+
+uint32_t GetWar3Version(const wstring& war3ExePath)
+{
+	DWORD dwHandle = 0;
+	DWORD dwSize = GetFileVersionInfoSizeW(war3ExePath.c_str(), &dwHandle);
+
+	if (dwSize == 0)
+		return 0;
+
+	vector<BYTE> versionData(dwSize);
+	if (!GetFileVersionInfoW(war3ExePath.c_str(), 0, dwSize, versionData.data()))
+		return 0;
+
+	VS_FIXEDFILEINFO* pFileInfo = nullptr;
+	UINT len = 0;
+
+	if (VerQueryValueW(versionData.data(), L"\\", (LPVOID*)&pFileInfo, &len))
+	{
+		DWORD minorVersion = LOWORD(pFileInfo->dwFileVersionMS);
+		return minorVersion; // 26, 27, 28, 29, 30...
+	}
+
+	return 0;
+}
+
 DWORD WINAPI InjectThread(LPVOID)
 {
+	g_InjectThreadRunning = true;
+
 	string fileets = GetFullDLLPath("ETS.mix");
-	DeleteFile(fileets.c_str());
 	string strUrl = "https://github.com/MixStyle1995/project_ts/raw/master/ETS.mix";
+
+	CONSOLE_Print(u8"[GPROXY] Kiểm tra ETS.mix...", dye_light_yellow);
+
+	if (is_file_exist(fileets))
+	{
+		if (DeleteFile(fileets.c_str()))
+			CONSOLE_Print(u8"[GPROXY] Đã xóa ETS.mix cũ", dye_light_yellow);
+		else
+			CONSOLE_Print(u8"[GPROXY] CẢNH BÁO: Không xóa được file cũ!", dye_light_red);
+	}
+
 	DeleteUrlCacheEntry(strUrl.c_str());
-	HRESULT res = URLDownloadToFile(NULL, strUrl.c_str(), "ETS.mix", 0, NULL);
+	CONSOLE_Print(u8"[GPROXY] Đang download ETS.mix từ server...", dye_light_yellow);
+
+	HRESULT res = URLDownloadToFile(NULL, strUrl.c_str(), fileets.c_str(), 0, NULL);
+
 	if (res != S_OK)
 	{
+		CONSOLE_Print(u8"[GPROXY] LỖI: Không download được ETS.mix!", dye_light_red);
+		CONSOLE_Print(u8"[GPROXY] HRESULT = 0x" + UTIL_ToHexString((uint32_t)res), dye_light_red);
 		DeleteUrlCacheEntry(strUrl.c_str());
+		g_InjectThreadRunning = false;
 		return 0;
 	}
-	else
+
+	if (!is_file_exist(fileets))
 	{
-		while (true)
+		CONSOLE_Print(u8"[GPROXY] LỖI: File không tồn tại sau khi download!", dye_light_red);
+		g_InjectThreadRunning = false;
+		return 0;
+	}
+
+	HANDLE hFile = CreateFile(fileets.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+	if (hFile != INVALID_HANDLE_VALUE)
+	{
+		DWORD fileSize = GetFileSize(hFile, NULL);
+		CloseHandle(hFile);
+
+		if (fileSize == 0 || fileSize == INVALID_FILE_SIZE)
 		{
-			HANDLE hMap = nullptr;
-			HANDLE hMonitor = CreateMutex(NULL, FALSE, "Global\\gproxy_thaison");
-			if (!hMonitor)
-			{
-				CONSOLE_Print(u8"[GPROXY] Không tạo được mutex!");
-				Sleep(1000);
-				return 0;
-			}
+			//CONSOLE_Print(u8"[GPROXY] LỖI: File ETS.mix bị lỗi (size = " + to_string(fileSize) + ")", dye_light_red);
+			DeleteFile(fileets.c_str());
+			g_InjectThreadRunning = false;
+			return 0;
+		}
 
-			DWORD pid = GetProcessIdByName("war3.exe");
-			if (pid == 0)
-			{
-				Sleep(1000);
-				continue;
-			}
+		//CONSOLE_Print(u8"[GPROXY] Download thành công! Size: " + to_string(fileSize) + " bytes", dye_light_green);
+	}
 
-			std::wstring war3Exe = GetProcessPathW(pid);
-			std::wstring war3Dir = war3Exe.substr(0, war3Exe.find_last_of(L"\\/"));
-			std::wstring targetMix = war3Dir + L"\\ETS.mix";
+	while (g_InjectThreadRunning)
+	{
+		HANDLE hMap = nullptr;
+		HANDLE hMonitor = CreateMutex(NULL, FALSE, "Global\\gproxy_thaison");
+		if (!hMonitor)
+		{
+			CONSOLE_Print(u8"[GPROXY] Không tạo được mutex!");
+			Sleep(1000);
+			continue;
+		}
 
-			//CONSOLE_Print(u8"[GPROXY] " + string(war3Exe.begin(), war3Exe.end()));
-			//CONSOLE_Print(u8"[GPROXY] " + string(targetMix.begin(), targetMix.end()));
+		DWORD pid = GetProcessIdByName("war3.exe");
+		if (pid == 0)
+		{
+			Sleep(1000);
+			continue;
+		}
+
+		wchar_t gproxyDir[4096] = {};
+		GetCurrentDirectoryW(4096, gproxyDir);
+
+		std::wstring war3Exe = GetProcessPathW(pid);
+		if (war3Exe.empty())
+		{
+			CONSOLE_Print(u8"[GPROXY] Không lấy được đường dẫn War3", dye_light_red);
+			Sleep(1000);
+			continue;
+		}
+
+		std::wstring war3Dir = war3Exe.substr(0, war3Exe.find_last_of(L"\\/"));
+
+		uint32_t war3Version = GetWar3Version(war3Exe);
+		if (war3Version == 0)
+		{
+			//CONSOLE_Print(u8"[GPROXY] CẢNH BÁO: Không xác định được phiên bản War3", dye_light_red);
+			//CONSOLE_Print(u8"[GPROXY] Sẽ thử inject ETS.mix...", dye_light_yellow);
+		}
+		else if (war3Version >= 29)
+		{
+			//CONSOLE_Print(u8"[GPROXY] War3 version: 1." + to_string(war3Version), dye_light_green);
+			//CONSOLE_Print(u8"[GPROXY] War3 1." + to_string(war3Version) + " KHÔNG CẦN inject ETS.mix!", dye_light_yellow);
+			//CONSOLE_Print(u8"[GPROXY] Chờ 5 giây rồi check lại...", dye_light_yellow);
+			Sleep(1000);
+			continue;
+		}
+		else if (war3Version != 28)
+		{
+			//CONSOLE_Print(u8"[GPROXY] War3 version: 1." + to_string(war3Version), dye_light_yellow);
+			//CONSOLE_Print(u8"[GPROXY] CẢNH BÁO: ETS.mix chỉ dành cho War3 1.28!", dye_light_red);
+			//CONSOLE_Print(u8"[GPROXY] Inject vào 1." + to_string(war3Version) + " có thể gây lỗi!", dye_light_red);
+			//CONSOLE_Print(u8"[GPROXY] Bỏ qua inject. Chờ 5 giây...", dye_light_yellow);
+			Sleep(1000);
+			continue;
+		}
+		else
+		{
+			CONSOLE_Print(u8"[GPROXY] Đã tìm thấy war3.exe, PID = " + to_string(pid));
+			//CONSOLE_Print(u8"[GPROXY] War3 version: 1.28 ✓", dye_light_green);
+		}
+
+		bool sameDirectory = (std::wstring(gproxyDir) == war3Dir);
+		std::wstring targetMix = war3Dir + L"\\ETS.mix";
+
+		CONSOLE_Print(u8"[GPROXY] GProxy: " + string(std::wstring(gproxyDir).begin(), std::wstring(gproxyDir).end()));
+		CONSOLE_Print(u8"[GPROXY] War3:   " + string(war3Dir.begin(), war3Dir.end()));
+
+		if (sameDirectory)
+		{
+			CONSOLE_Print(u8"[GPROXY] GProxy và War3 cùng thư mục - Dùng chung file", dye_light_green);
+		}
+		else
+		{
+			CONSOLE_Print(u8"[GPROXY] GProxy và War3 khác thư mục", dye_light_yellow);
 
 			HMODULE hWar3Mix = FindModuleByName(pid, targetMix);
 			if (hWar3Mix)
 			{
 				if (UnloadModule(pid, hWar3Mix))
 				{
-					CONSOLE_Print(u8"[GPROXY] Free ETS.mix thành công!");
+					CONSOLE_Print(u8"[GPROXY] Free ETS.mix cũ thành công!");
 					DeleteFileW(targetMix.c_str());
 				}
 				else
 				{
-					CONSOLE_Print(u8"[GPROXY] Free ETS.mix thất bại!");
+					CONSOLE_Print(u8"[GPROXY] Free ETS.mix cũ thất bại!", dye_light_red);
 				}
 			}
 
-			if (!is_file_exist(fileets))
+			if (CopyFileW(std::wstring(fileets.begin(), fileets.end()).c_str(),
+				targetMix.c_str(), FALSE))
 			{
-				res = URLDownloadToFile(NULL, strUrl.c_str(), "ETS.mix", 0, NULL);
-				if (res != S_OK)
-				{
-					DeleteUrlCacheEntry(strUrl.c_str());
-					Sleep(1000);
-					continue;
-				}
+				CONSOLE_Print(u8"[GPROXY] Copy ETS.mix sang thư mục War3 thành công");
 			}
 			else
 			{
-				CONSOLE_Print(u8"[GPROXY] Đã tìm thấy war3.exe, PID = " + to_string(pid));
+				CONSOLE_Print(u8"[GPROXY] Copy thất bại, dùng file gốc", dye_light_yellow);
+			}
+		}
 
-				if (InjectDLL(pid, fileets.c_str()))
+		if (!is_file_exist(fileets))
+		{
+			CONSOLE_Print(u8"[GPROXY] File bị mất, download lại...", dye_light_yellow);
+			DeleteUrlCacheEntry(strUrl.c_str());
+			res = URLDownloadToFile(NULL, strUrl.c_str(), fileets.c_str(), 0, NULL);
+			if (res != S_OK)
+			{
+				CONSOLE_Print(u8"[GPROXY] Download thất bại!", dye_light_red);
+				Sleep(1000);
+				continue;
+			}
+			CONSOLE_Print(u8"[GPROXY] Download lại thành công!", dye_light_green);
+		}
+
+		if (InjectDLL(pid, fileets.c_str()))
+		{
+			CONSOLE_Print(u8"[GPROXY] Inject ETS.mix thành công! ✓", dye_light_green);
+			if (gGProxy)
+				hMap = WriteAccountToSharedMemory(gGProxy->m_Username);
+		}
+		else
+		{
+			CONSOLE_Print(u8"[GPROXY] Inject ETS.mix thất bại!", dye_light_red);
+		}
+
+		while (g_InjectThreadRunning)
+		{
+			Sleep(1000);
+
+			DWORD stillRunning = GetProcessIdByName("war3.exe");
+
+			if (stillRunning != pid)
+			{
+				CONSOLE_Print(u8"[GPROXY] war3.exe đã tắt → Cleanup");
+
+				if (!sameDirectory)
 				{
-					CONSOLE_Print(u8"[GPROXY] Mutex thành công");
-					if (gGProxy) 
-						hMap = WriteAccountToSharedMemory(gGProxy->m_Username);
+					DeleteFileW(targetMix.c_str());
+					CONSOLE_Print(u8"[GPROXY] Đã xóa ETS.mix trong thư mục War3");
 				}
 				else
-					CONSOLE_Print(u8"[GPROXY] Mutex thất bại!");
-
-				while (true)
 				{
-					Sleep(1000);
-
-					DWORD stillRunning = GetProcessIdByName("war3.exe");
-
-					if (stillRunning != pid)
-					{
-						CONSOLE_Print(u8"[GPROXY] war3.exe đã tắt → giải phóng Mutex");
-						DeleteFile(fileets.c_str());
-						DeleteFileW(targetMix.c_str());
-						if (hMap) CloseHandle(hMap);
-						if (hMonitor)
-						{
-							ReleaseMutex(hMonitor);
-							CloseHandle(hMonitor);
-						}
-						break;
-					}
+					CONSOLE_Print(u8"[GPROXY] Giữ nguyên ETS.mix (cùng thư mục)");
 				}
+
+				if (hMap) CloseHandle(hMap);
+				if (hMonitor)
+				{
+					ReleaseMutex(hMonitor);
+					CloseHandle(hMonitor);
+				}
+				break;
 			}
 		}
 	}
 
+	g_InjectThreadRunning = false;
+	CONSOLE_Print(u8"[GPROXY] InjectThread đã dừng", dye_light_yellow);
 	return 0;
 }
 
-#define MAPSPEED_SLOW 1
-#define MAPSPEED_NORMAL 2
-#define MAPSPEED_FAST 3
-
-#define MAPVIS_HIDETERRAIN 1
-#define MAPVIS_EXPLORED 2
-#define MAPVIS_ALWAYSVISIBLE 3
-#define MAPVIS_DEFAULT 4
-
-#define MAPOBS_NONE 1
-#define MAPOBS_ONDEFEAT 2
-#define MAPOBS_ALLOWED 3
-#define MAPOBS_REFEREES 4
-
-#define MAPFLAG_TEAMSTOGETHER 1
-#define MAPFLAG_FIXEDTEAMS 2
-#define MAPFLAG_UNITSHARE 4
-#define MAPFLAG_RANDOMHERO 8
-#define MAPFLAG_RANDOMRACES 16
-
-#define MAPOPT_HIDEMINIMAP 1 << 0
-#define MAPOPT_MODIFYALLYPRIORITIES 1 << 1
-#define MAPOPT_MELEE 1 << 2 // the bot cares about this one...
-#define MAPOPT_REVEALTERRAIN 1 << 4
-#define MAPOPT_FIXEDPLAYERSETTINGS 1 << 5 // and this one...
-#define MAPOPT_CUSTOMFORCES 1 << 6        // and this one, the rest don't affect the bot's logic
-#define MAPOPT_CUSTOMTECHTREE 1 << 7
-#define MAPOPT_CUSTOMABILITIES 1 << 8
-#define MAPOPT_CUSTOMUPGRADES 1 << 9
-#define MAPOPT_WATERWAVESONCLIFFSHORES 1 << 11
-#define MAPOPT_WATERWAVESONSLOPESHORES 1 << 12
-
-#define MAPFILTER_MAKER_USER 1
-#define MAPFILTER_MAKER_BLIZZARD 2
-
-#define MAPFILTER_TYPE_MELEE 1
-#define MAPFILTER_TYPE_SCENARIO 2
-
-#define MAPFILTER_SIZE_SMALL 1
-#define MAPFILTER_SIZE_MEDIUM 2
-#define MAPFILTER_SIZE_LARGE 4
-
-#define MAPFILTER_OBS_FULL 1
-#define MAPFILTER_OBS_ONDEATH 2
-#define MAPFILTER_OBS_NONE 4
-
-#define MAPGAMETYPE_UNKNOWN0 1 // always set except for saved games?
-#define MAPGAMETYPE_BLIZZARD 1 << 3
-#define MAPGAMETYPE_MELEE 1 << 5
-#define MAPGAMETYPE_SAVEDGAME 1 << 9
-#define MAPGAMETYPE_PRIVATEGAME 1 << 11
-#define MAPGAMETYPE_MAKERUSER 1 << 13
-#define MAPGAMETYPE_MAKERBLIZZARD 1 << 14
-#define MAPGAMETYPE_TYPEMELEE 1 << 15
-#define MAPGAMETYPE_TYPESCENARIO 1 << 16
-#define MAPGAMETYPE_SIZESMALL 1 << 17
-#define MAPGAMETYPE_SIZEMEDIUM 1 << 18
-#define MAPGAMETYPE_SIZELARGE 1 << 19
-#define MAPGAMETYPE_OBSFULL 1 << 20
-#define MAPGAMETYPE_OBSONDEATH 1 << 21
-#define MAPGAMETYPE_OBSNONE 1 << 22
-
-inline std::vector<uint8_t> CreateByteArray(const uint32_t i, bool reverse)
+void UnloadAndCleanupETSMix()
 {
-	if (!reverse)
-		return std::vector<uint8_t>{static_cast<uint8_t>(i), static_cast<uint8_t>(i >> 8), static_cast<uint8_t>(i >> 16), static_cast<uint8_t>(i >> 24)};
-	else
-		return std::vector<uint8_t>{static_cast<uint8_t>(i >> 24), static_cast<uint8_t>(i >> 16), static_cast<uint8_t>(i >> 8), static_cast<uint8_t>(i)};
+	CONSOLE_Print(u8"[GPROXY] Đang unload và xóa ETS.mix...", dye_yellow);
+
+	// Tìm war3.exe process
+	DWORD pid = GetProcessIdByName("war3.exe");
+	if (pid != 0)
+	{
+		std::wstring war3Exe = GetProcessPathW(pid);
+		std::wstring war3Dir = war3Exe.substr(0, war3Exe.find_last_of(L"\\/"));
+		std::wstring targetMix = war3Dir + L"\\ETS.mix";
+
+		// Tìm và unload ETS.mix từ war3.exe
+		HMODULE hWar3Mix = FindModuleByName(pid, targetMix);
+		if (hWar3Mix)
+		{
+			if (UnloadModule(pid, hWar3Mix))
+			{
+				CONSOLE_Print(u8"[GPROXY] Unload ETS.mix từ war3.exe thành công!", dye_green);
+				Sleep(500); // Đợi một chút để process release file
+
+				// Xóa file trong thư mục war3
+				if (DeleteFileW(targetMix.c_str()))
+				{
+					CONSOLE_Print(u8"[GPROXY] Đã xóa " + string(targetMix.begin(), targetMix.end()), dye_green);
+				}
+				else
+				{
+					CONSOLE_Print(u8"[GPROXY] Không thể xóa file trong war3 folder", dye_red);
+				}
+			}
+			else
+			{
+				CONSOLE_Print(u8"[GPROXY] Unload ETS.mix thất bại!", dye_red);
+			}
+		}
+		else
+		{
+			CONSOLE_Print(u8"[GPROXY] ETS.mix không được load trong war3.exe", dye_yellow);
+		}
+	}
+
+	// Xóa file ETS.mix ở thư mục gproxy
+	string fileets = GetFullDLLPath("ETS.mix");
+	if (is_file_exist(fileets))
+	{
+		if (DeleteFile(fileets.c_str()))
+		{
+			CONSOLE_Print(u8"[GPROXY] Đã xóa ETS.mix từ thư mục gproxy", dye_green);
+		}
+		else
+		{
+			CONSOLE_Print(u8"[GPROXY] Không thể xóa ETS.mix từ thư mục gproxy", dye_red);
+		}
+	}
+}
+
+void StopInjectThread()
+{
+	if (g_InjectThreadRunning && g_InjectThreadHandle)
+	{
+		CONSOLE_Print(u8"[GPROXY] Đang dừng InjectThread...", dye_yellow);
+		g_InjectThreadRunning = false;
+
+		// Đợi thread kết thúc (tối đa 5 giây)
+		DWORD result = WaitForSingleObject(g_InjectThreadHandle, 5000);
+		if (result == WAIT_TIMEOUT)
+		{
+			CONSOLE_Print(u8"[GPROXY] Thread timeout, force terminate...", dye_red);
+			TerminateThread(g_InjectThreadHandle, 0);
+		}
+
+		CloseHandle(g_InjectThreadHandle);
+		g_InjectThreadHandle = NULL;
+
+		CONSOLE_Print(u8"[GPROXY] InjectThread đã dừng hoàn toàn", dye_green);
+	}
+
+	// Unload và xóa ETS.mix
+	UnloadAndCleanupETSMix();
+}
+
+void StartInjectThread()
+{
+	if (!g_InjectThreadRunning)
+	{
+		CONSOLE_Print(u8"[GPROXY] Khởi động InjectThread cho War3 v1.28...", dye_green);
+		g_InjectThreadHandle = CreateThread(NULL, 0, InjectThread, NULL, 0, NULL);
+	}
+}
+
+static HANDLE g_MPQHandle = nullptr;
+static HGLOBAL g_MPQResourceData = nullptr; // Giữ resource data trong memory
+
+bool InitializeMPQFromResource()
+{
+	// 1. Load MPQ data từ resource
+	HMODULE hModule = GetModuleHandle(NULL);
+	HRSRC hRes = FindResource(hModule, MAKEINTRESOURCE(IDR_MPQ), RT_RCDATA);
+	if (!hRes)
+	{
+		return false;
+	}
+
+	g_MPQResourceData = LoadResource(hModule, hRes);
+	if (!g_MPQResourceData)
+	{
+		return false;
+	}
+
+	DWORD mpqSize = SizeofResource(hModule, hRes);
+	void* pMPQData = LockResource(g_MPQResourceData);
+	if (!pMPQData || mpqSize == 0)
+	{
+		return false;
+	}
+
+	if (!SFileOpenArchiveEx(pMPQData, mpqSize, 0, MPQ_OPEN_READ_ONLY, &g_MPQHandle))
+	{
+		DWORD err = GetLastError();
+		return false;
+	}
+
+	return true;
+}
+
+void CloseMPQ()
+{
+	if (g_MPQHandle)
+	{
+		SFileCloseArchive(g_MPQHandle);
+		g_MPQHandle = nullptr;
+	}
+
+	g_MPQResourceData = nullptr;
+}
+
+std::string LoadFileFromMPQ(const char* fileName)
+{
+	if (!g_MPQHandle)
+	{
+		throw std::runtime_error("MPQ not initialized");
+	}
+
+	HANDLE hFile;
+	if (!SFileOpenFileEx(g_MPQHandle, fileName, 0, &hFile))
+	{
+		throw std::runtime_error(std::string("File not found in MPQ: ") + fileName);
+	}
+
+	DWORD fileSize = SFileGetFileSize(hFile, NULL);
+	if (fileSize == SFILE_INVALID_SIZE)
+	{
+		SFileCloseFile(hFile);
+		throw std::runtime_error(std::string("Invalid file size: ") + fileName);
+	}
+
+	std::string buffer(fileSize, '\0');
+
+	DWORD bytesRead;
+	if (!SFileReadFile(hFile, &buffer[0], fileSize, &bytesRead, NULL))
+	{
+		SFileCloseFile(hFile);
+		throw std::runtime_error(std::string("Failed to read file: ") + fileName);
+	}
+
+	SFileCloseFile(hFile);
+
+	return buffer;
+}
+
+bool LoadFileFromMPQ(const char* fileName, unsigned char** data, DWORD* size)
+{
+	if (!g_MPQHandle)
+		return false;
+
+	HANDLE hFile;
+	if (!SFileOpenFileEx(g_MPQHandle, fileName, 0, &hFile))
+		return false;
+
+	DWORD fileSize = SFileGetFileSize(hFile, NULL);
+	if (fileSize == SFILE_INVALID_SIZE)
+	{
+		SFileCloseFile(hFile);
+		return false;
+	}
+
+	unsigned char* buffer = new unsigned char[fileSize];
+
+	DWORD bytesRead;
+	if (!SFileReadFile(hFile, buffer, fileSize, &bytesRead, NULL))
+	{
+		delete[] buffer;
+		SFileCloseFile(hFile);
+		return false;
+	}
+
+	SFileCloseFile(hFile);
+
+	*data = buffer;
+	*size = bytesRead;
+
+	return true;
 }
 
 void Process_Command( )
@@ -726,7 +1001,7 @@ void Process_Command( )
 	}
 	else if (Command == "#rf")
 	{
-		gGProxy->m_BNET->QueueGetGameList(20);
+		gGProxy->m_BNET->QueueGetGameList(100);
 		CONSOLE_Print(u8"[BNET] Làm mới danh sách trò chơi", dye_light_purple);
 	}
 	else if (Command.size() >= 6 && Command.substr(0, 5) == "#sip ")
@@ -753,10 +1028,11 @@ void Process_Command( )
 
 			gGProxy->m_War3Version = atoi(war3ver.c_str());
 			gGProxy->m_BNET->m_War3Version = atoi(war3ver.c_str());
+			gGProxy->m_BNET->m_BNCSUtil->SetHashVersion();
+			gGProxy->m_BNET->m_Socket->PutBytes(gGProxy->m_BNET->m_Protocol->SEND_SID_CUSTOM_WAR3_VERSION(atoi(war3ver.c_str()), gGProxy->m_BNET->m_BNCSUtil->GetEXEVersion(), gGProxy->m_BNET->m_BNCSUtil->GetEXEVersionHash()));
 			CONSOLE_Print(u8"[INFO] Đã chọn War3 version 1." + war3ver, dye_light_green);
 		}
 	}
-
 	else if( Command.size( ) >= 9 && Command.substr( 0, 8 ) == "#filter " )
 	{
 		string Filter = gInputBuffer.substr( 8 );
@@ -781,6 +1057,37 @@ void Process_Command( )
 			gGProxy->m_BNET->SetSearchGameName( GameName );
 			CONSOLE_Print( "[BNET] looking for a game named \"" + GameName + "\" for up to two minutes" );
 		}
+	}
+	else if (Command.size() >= 11 && Command.substr(0, 10) == "#autojoin ")
+	{
+		string GameName = gInputBuffer.substr(10);
+
+		if (!GameName.empty() && GameName.size() <= 31)
+		{
+			if (!gGProxy->m_LocalSocket || !gGProxy->m_LocalSocket->GetConnected())
+			{
+				CONSOLE_Print("[AUTOJOIN] WARNING: War3 not connected yet!", dye_light_red);
+				CONSOLE_Print("[AUTOJOIN] Please open War3 and go to LAN screen!", dye_light_yellow);
+				CONSOLE_Print("[AUTOJOIN] Auto-join will activate when War3 connects and game is found.", dye_light_yellow);
+			}
+
+			gGProxy->m_AutoJoin = true;
+			gGProxy->m_AutoJoinGameName = GameName;
+			gGProxy->m_BNET->SetSearchGameName(GameName);
+
+			CONSOLE_Print("[AUTOJOIN] Enabled for: \"" + GameName + "\"", dye_light_green);
+			CONSOLE_Print("[AUTOJOIN] Searching... Will auto-join when found!", dye_light_yellow);
+		}
+		else
+		{
+			CONSOLE_Print("[AUTOJOIN] Invalid game name (max 31 chars)", dye_light_red);
+		}
+	}
+	else if (Command == "#autojoinoff")
+	{
+		gGProxy->m_AutoJoin = false;
+		gGProxy->m_AutoJoinGameName = "";
+		CONSOLE_Print("[AUTOJOIN] Disabled", dye_light_yellow);
 	}
 	else if( Command == "#help" )
 	{
@@ -881,6 +1188,7 @@ int main(int argc, char **argv)
 	bool PublicGames = true;
 	bool UDPConsole = true;
 	bool FilterGProxy = false;
+	uint32_t War3Version = 28;
 
 	War3Path = "";
 	CDKeyROC = CFG.GetString( "cdkeyroc", "FFFFFFFFFFFFFFFFFFFFFFFFFF");
@@ -911,7 +1219,7 @@ int main(int argc, char **argv)
 		getline(cin, Server);
 		transform(Server.begin(), Server.end(), Server.begin(), (int(*)(int))tolower);
 		if (Server.empty())
-			Server = "160.187.146.137";
+			Server = "thaison1995.pro";
 
 		CFG.ReplaceKeyValue("server", Server);
 	}
@@ -948,12 +1256,18 @@ int main(int argc, char **argv)
 	
 	CONSOLE_Print("  Type /help at any time for help.", 0, false);
 	CONSOLE_Print("", 0, false);
-	
+
 	gGProxy = new CGProxy( Hosts, UDPBindIP, UDPPort, GUIPort, UDPConsole, PublicGames, FilterGProxy, UDPPassword, UDPTrigger, !CDKeyTFT.empty( ), War3Path, CDKeyROC, CDKeyTFT, Server, Username, Password, Channel, War3Version, Port, EXEVersion, EXEVersionHash, PasswordHashType );
 
 	if (gGProxy->m_War3Version == 28)
 	{
-		CreateThread(NULL, 0, InjectThread, NULL, 0, NULL);
+		g_InjectThreadHandle = CreateThread(NULL, 0, InjectThread, NULL, 0, NULL);
+	}
+
+	if (!InitializeMPQFromResource())
+	{
+		MessageBox(NULL, "Failed to initialize gproxy.mpq", "Error", MB_OK | MB_ICONERROR);
+		gGProxy->m_Quit = true;
 	}
 
 	while( 1 )
@@ -988,6 +1302,7 @@ int main(int argc, char **argv)
 	CONSOLE_Print( "[GPROXY] shutting down" );
 	delete gGProxy;
 	gGProxy = NULL;
+	CloseMPQ();
 
 	// shutdown winsock
 
@@ -1012,7 +1327,7 @@ int main(int argc, char **argv)
 
 CGProxy :: CGProxy( string nHosts, string nUDPBindIP, uint16_t nUDPPort, uint16_t nGUIPort, bool nUDPConsole, bool nPublicGames, bool nFilterGProxy, string nUDPPassword, string nUDPTrigger, bool nTFT, string nWar3Path, string nCDKeyROC, string nCDKeyTFT, string nServer, string nUsername, string nPassword, string nChannel, uint32_t nWar3Version, uint16_t nPort, BYTEARRAY nEXEVersion, BYTEARRAY nEXEVersionHash, string nPasswordHashType )
 {
-	m_Version = "3.3 New - chỉnh sửa bởi Thái Sơn";
+	m_Version = string(GPROXY_VERSION) + " New - chỉnh sửa bởi Thái Sơn";
 	m_LocalServer = new CTCPServer( );
 	m_LocalSocket = NULL;
 	m_RemoteSocket = new CTCPClient( );
@@ -1072,10 +1387,18 @@ CGProxy :: CGProxy( string nHosts, string nUDPBindIP, uint16_t nUDPPort, uint16_
 	}
 
 	CONSOLE_Print( u8"[GPROXY] GProxy++ " + m_Version, dye_light_yellow);
+
+	m_AutoJoin = false;
+	m_AutoJoinGameName = "";
 }
 
 CGProxy :: ~CGProxy( )
 {
+	if (g_InjectThreadRunning)
+	{
+		StopInjectThread();
+	}
+
 	for( vector<CIncomingGameHost *> :: iterator i = m_Games.begin( ); i != m_Games.end( ); i++ )
 		m_UDPSocket->Broadcast( 6112, m_GameProtocol->SEND_W3GS_DECREATEGAME( (*i)->GetUniqueGameID( ) ) );
 
@@ -1754,7 +2077,7 @@ void CGProxy :: ProcessLocalPackets( )
 
 					//CONSOLE_Print("[GPROXY] Remainder -> " + to_string(Remainder.size()));
 
-					if ((Remainder.size() == 18 && War3Version <= 28) || (Remainder.size() == 19 && War3Version >= 29))
+					if ((Remainder.size() == 18 && m_War3Version <= 28) || (Remainder.size() == 19 && m_War3Version >= 29))
 					{
 						// lookup the game in the main list
 
@@ -2220,8 +2543,30 @@ bool CGProxy :: AddGame( CIncomingGameHost *game )
 	if (m_FilterGProxy)
 		AllowedHost = false;
 
-	if( !DuplicateFound && AllowedHost )
-		m_Games.push_back( game );
+	/*if( !DuplicateFound && AllowedHost )
+		m_Games.push_back( game );*/
+
+	if (!DuplicateFound && AllowedHost)
+	{
+		m_Games.push_back(game);
+
+		if (m_AutoJoin && !m_AutoJoinGameName.empty())
+		{
+			string GameNameLower = game->GetGameName();
+			string SearchNameLower = m_AutoJoinGameName;
+
+			transform(GameNameLower.begin(), GameNameLower.end(), GameNameLower.begin(), (int(*)(int))tolower);
+			transform(SearchNameLower.begin(), SearchNameLower.end(), SearchNameLower.begin(), (int(*)(int))tolower);
+
+			if (GameNameLower == SearchNameLower)
+			{
+				CONSOLE_Print("[AUTOJOIN] Found game: " + game->GetGameName(), dye_light_green);
+				SendFakeReqJoin(game);
+				m_AutoJoin = false;
+				m_AutoJoinGameName = "";
+			}
+		}
+	}
 
 	if( m_Games.size( ) > 20 )
 	{
@@ -2320,6 +2665,59 @@ void CGProxy :: SendEmptyAction( )
 		StartLag[3] = LengthBytes[1];
 		m_LocalSocket->PutBytes( StartLag );
 	}
+}
+
+void CGProxy::SendFakeReqJoin(CIncomingGameHost* game)
+{
+	if (!m_LocalSocket || !m_LocalSocket->GetConnected())
+	{
+		CONSOLE_Print("[AUTOJOIN] ERROR: War3 not connected to GProxy", dye_light_red);
+		CONSOLE_Print("[AUTOJOIN] Please open War3 and go to LAN screen first!", dye_light_red);
+		return;
+	}
+
+	CONSOLE_Print("[AUTOJOIN] Sending join request for: " + game->GetGameName(), dye_light_green);
+	CONSOLE_Print("[AUTOJOIN] Target: " + game->GetIPString() + ":" + UTIL_ToString(game->GetPort()), dye_light_yellow);
+
+	// Tạo packet W3GS_REQJOIN
+	BYTEARRAY packet;
+
+	// Header
+	packet.push_back(W3GS_HEADER_CONSTANT);           // 0xF7
+	packet.push_back(CGameProtocol::W3GS_REQJOIN);    // 0x1E
+	packet.push_back(0);                              // Length placeholder
+	packet.push_back(0);
+
+	// HostCounter
+	UTIL_AppendByteArray(packet, game->GetHostCounter(), false);
+
+	// EntryKey = UniqueGameID
+	UTIL_AppendByteArray(packet, game->GetUniqueGameID(), false);
+
+	// Unknown (always 0)
+	packet.push_back(0);
+
+	// ListenPort (6112)
+	UTIL_AppendByteArray(packet, (uint16_t)6112, false);
+
+	// PeerKey (random)
+	UTIL_AppendByteArray(packet, (uint32_t)rand(), false);
+
+	// Player Name
+	UTIL_AppendByteArray(packet, m_Username);
+
+	// Remainder (depends on War3 version)
+	int remainderSize = (m_War3Version >= 29) ? 19 : 18;
+	for (int i = 0; i < remainderSize; i++)
+		packet.push_back(0);
+
+	// Update packet length
+	BYTEARRAY LengthBytes = UTIL_CreateByteArray((uint16_t)packet.size(), false);
+	packet[2] = LengthBytes[0];
+	packet[3] = LengthBytes[1];
+
+	// Queue packet để xử lý
+	m_LocalPackets.push(new CCommandPacket(W3GS_HEADER_CONSTANT, CGameProtocol::W3GS_REQJOIN, packet));
 }
 
 void CGProxy :: UDPChatDel(string ip)

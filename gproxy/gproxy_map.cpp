@@ -95,6 +95,7 @@ static char g_SelectedMapPath[512] = "";
 static int g_SelectedWar3Version = 3; // Default 1.28
 static bool g_UploadMapChecked = true;
 static bool g_UploadConfigChecked = true;
+static bool g_UploadLockDow = false;
 
 // Map list
 static std::vector<json> g_MapList;
@@ -117,6 +118,207 @@ static std::string g_War3Path;
 static std::string g_War3MapsPath;
 static bool g_ShowWar3PathPopup = false;
 static char g_War3PathBuffer[4096] = "";
+char g_mappassword[256] = "";
+static bool g_ShowPasswordDialog = false;
+static char g_DownloadPasswordBuffer[256] = "";
+static std::string g_PendingDownloadFilename;
+static uint64_t g_PendingDownloadSize = 0;
+static int g_PendingDownloadIndex = -1;
+static bool g_ShowPasswordText = false;
+bool g_ShowPasswordTextUpload = false;
+
+static bool checknamemap = true;
+
+struct ColoredTextSegment
+{
+    std::string text;
+    ImVec4 color;
+    bool hasColor;
+};
+
+std::vector<ColoredTextSegment> ParseWar3ColoredText(const std::string& input)
+{
+    std::vector<ColoredTextSegment> segments;
+
+    size_t pos = 0;
+    size_t len = input.length();
+
+    while (pos < len)
+    {
+        // Tìm color code |c
+        size_t colorPos = input.find("|c", pos);
+
+        if (colorPos == std::string::npos)
+        {
+            // Không còn color code, thêm text còn lại
+            std::string remaining = input.substr(pos);
+
+            // Remove |r
+            size_t resetPos;
+            while ((resetPos = remaining.find("|r")) != std::string::npos)
+            {
+                remaining.erase(resetPos, 2);
+            }
+
+            if (!remaining.empty())
+            {
+                ColoredTextSegment seg;
+                seg.text = remaining;
+                seg.hasColor = false;
+                seg.color = ImVec4(1, 1, 1, 1); // Default white
+                segments.push_back(seg);
+            }
+            break;
+        }
+
+        // Thêm text trước color code
+        if (colorPos > pos)
+        {
+            std::string plainText = input.substr(pos, colorPos - pos);
+
+            // Remove |r
+            size_t resetPos;
+            while ((resetPos = plainText.find("|r")) != std::string::npos)
+            {
+                plainText.erase(resetPos, 2);
+            }
+
+            if (!plainText.empty())
+            {
+                ColoredTextSegment seg;
+                seg.text = plainText;
+                seg.hasColor = false;
+                seg.color = ImVec4(1, 1, 1, 1);
+                segments.push_back(seg);
+            }
+        }
+
+        // Parse color code (|cffRRGGBB = 10 chars)
+        if (colorPos + 10 <= len)
+        {
+            // Extract hex color (skip |c, get 8 hex chars)
+            std::string hexColor = input.substr(colorPos + 2, 8);
+
+            // Convert AARRGGBB to RGB (skip first 2 chars - alpha)
+            std::string rgbHex = hexColor.substr(2, 6);
+
+            // Parse RGB
+            unsigned int rgb;
+            sscanf(rgbHex.c_str(), "%x", &rgb);
+
+            float r = ((rgb >> 16) & 0xFF) / 255.0f;
+            float g = ((rgb >> 8) & 0xFF) / 255.0f;
+            float b = (rgb & 0xFF) / 255.0f;
+
+            // Tìm end của colored text (|r hoặc end of string)
+            size_t endPos = input.find("|r", colorPos + 10);
+            if (endPos == std::string::npos)
+            {
+                endPos = len;
+            }
+
+            // Get colored text
+            std::string coloredText = input.substr(colorPos + 10, endPos - (colorPos + 10));
+
+            if (!coloredText.empty())
+            {
+                ColoredTextSegment seg;
+                seg.text = coloredText;
+                seg.hasColor = true;
+                seg.color = ImVec4(r, g, b, 1.0f);
+                segments.push_back(seg);
+            }
+
+            // Move position past |r if exists
+            if (endPos < len && input.substr(endPos, 2) == "|r")
+            {
+                pos = endPos + 2;
+            }
+            else
+            {
+                pos = endPos;
+            }
+        }
+        else
+        {
+            // Invalid color code, skip
+            pos = colorPos + 1;
+        }
+    }
+
+    return segments;
+}
+
+// Render War3 colored text trong ImGui
+void RenderWar3ColoredText(const std::string& text)
+{
+    auto segments = ParseWar3ColoredText(text);
+
+    if (segments.empty())
+    {
+        if (g_UnicodeFont)
+            ImGui::PushFont(g_UnicodeFont);
+
+        ImGui::Text("%s", text.c_str());
+
+        if (g_UnicodeFont)
+            ImGui::PopFont();
+        return;
+    }
+
+    if (g_UnicodeFont)
+        ImGui::PushFont(g_UnicodeFont);
+
+    for (size_t i = 0; i < segments.size(); i++)
+    {
+        const auto& seg = segments[i];
+
+        if (seg.hasColor)
+        {
+            ImGui::TextColored(seg.color, "%s", seg.text.c_str());
+        }
+        else
+        {
+            ImGui::Text("%s", seg.text.c_str());
+        }
+
+        // SameLine nếu không phải segment cuối
+        if (i < segments.size() - 1)
+        {
+            ImGui::SameLine(0, 0); // No spacing
+        }
+    }
+
+    if (g_UnicodeFont)
+        ImGui::PopFont();
+}
+
+std::string StripWar3ColorCodes(const std::string& text)
+{
+    std::string result = text;
+
+    // Remove |cffRRGGBB
+    size_t pos;
+    while ((pos = result.find("|c")) != std::string::npos)
+    {
+        if (pos + 10 <= result.length())
+        {
+            result.erase(pos, 10);
+        }
+        else
+        {
+            break;
+        }
+    }
+
+    // Remove |r
+    while ((pos = result.find("|r")) != std::string::npos)
+    {
+        result.erase(pos, 2);
+    }
+
+    return result;
+}
 
 #define MAPSPEED_SLOW 1
 #define MAPSPEED_NORMAL 2
@@ -334,7 +536,7 @@ void CConfig_ReplaceKeyValue(std::string strFile, const std::string& key, const 
 
 bool AutoDecryptMPQ(unsigned char* buffer, size_t size)
 {
-    //Ham nay khong public
+   
     return true;
 }
 
@@ -773,6 +975,14 @@ bool LoadAndProcessMap(const std::string& filepath, const std::string& filename,
     }
 
     CConfig_ReplaceKeyValue(g_ConfigFilePath, "map_cfgonly", "1");
+    CConfig_ReplaceKeyValue(g_ConfigFilePath, "map_lockdow", g_UploadLockDow ? "1" : "0");
+
+    if (strlen(g_mappassword) > 0)
+    {
+        std::string encodedPassword = AdvB64::encode(std::string(g_mappassword));
+        CConfig_ReplaceKeyValue(g_ConfigFilePath, "map_pass", encodedPassword);
+        memset(g_mappassword, 0, sizeof(g_mappassword));
+    }
 
     /*std::string cfgContent = ReadFileToString(cfgPath);
     if (cfgContent.empty())
@@ -849,7 +1059,7 @@ void FilterMapList()
         }
         else 
         {
-            std::string filename = map.value("filename", "");
+            std::string filename = map.value("map_name", "");
             std::transform(filename.begin(), filename.end(), filename.begin(), ::tolower);
 
             if (filename.find(searchTerm) != std::string::npos) 
@@ -860,43 +1070,11 @@ void FilterMapList()
     }
 }
 
-std::string LoadResourceString(uint32_t resourceId, LPCSTR resourceType = RT_RCDATA)
-{
-    HMODULE hModule = GetModuleHandle(NULL);
-
-    HRSRC hRes = FindResource(hModule, MAKEINTRESOURCE(resourceId), resourceType);
-    if (!hRes)
-    {
-        DWORD err = GetLastError();
-        throw std::runtime_error("FindResource failed for ID " + std::to_string(resourceId) + ", error: " + std::to_string(err));
-    }
-
-    HGLOBAL hData = LoadResource(hModule, hRes);
-    if (!hData)
-    {
-        throw std::runtime_error("LoadResource failed for ID " + std::to_string(resourceId));
-    }
-
-    DWORD size = SizeofResource(hModule, hRes);
-    if (size == 0)
-    {
-        throw std::runtime_error("Resource size is zero for ID " + std::to_string(resourceId));
-    }
-
-    void* pData = LockResource(hData);
-    if (!pData)
-    {
-        throw std::runtime_error("LockResource failed for ID " + std::to_string(resourceId));
-    }
-
-    return std::string(static_cast<const char*>(pData), size);
-}
-
 void ProcessMapThread(const std::string& filepath, const std::string& filename, const std::string& szPath, int nWar3Version)
 {
 	g_MapCfgPath = szPath;
 
-    g_UploadMessage = "Processing map file...";
+    g_UploadMessage = g_SelecteNgonNgu ? "Processing map file..." : "Đang xử lý Map...";
     g_UploadMessageType = 3;
 
     // Initialize CRC32
@@ -904,18 +1082,18 @@ void ProcessMapThread(const std::string& filepath, const std::string& filename, 
 
     if (nWar3Version == 29)
     {
-        g_CommonJ = LoadResourceString(IDR_COMMON_129_J);
-        g_BlizzardJ = LoadResourceString(IDR_BLIZZARD_129_J);
+        g_CommonJ = LoadFileFromMPQ("common-129.j");
+        g_BlizzardJ = LoadFileFromMPQ("blizzard-129.j");
     }
     else if (nWar3Version >= 30)
     {
-        g_CommonJ = LoadResourceString(IDR_COMMON_131_J);
-        g_BlizzardJ = LoadResourceString(IDR_BLIZZARD_131_J);
+        g_CommonJ = LoadFileFromMPQ("common-131.j");
+        g_BlizzardJ = LoadFileFromMPQ("blizzard-131.j");
     }
     else
     {
-        g_CommonJ = LoadResourceString(IDR_COMMON_J);
-        g_BlizzardJ = LoadResourceString(IDR_BLIZZARD_J);
+        g_CommonJ = LoadFileFromMPQ("common.j");
+        g_BlizzardJ = LoadFileFromMPQ("blizzard.j");
     }
 
     if (g_CommonJ.empty() || g_BlizzardJ.empty())
@@ -932,12 +1110,12 @@ void ProcessMapThread(const std::string& filepath, const std::string& filename, 
         g_ProcessedMapConfig = config;
         g_MapProcessed = true;
 
-        g_UploadMessage = "Map processed successfully! Ready to upload.";
+        g_UploadMessage = g_SelecteNgonNgu ? "Map processed successfully! Ready to upload." : "Map đã được xử lý thành công! Sẵn sàng để tải lên.";
         g_UploadMessageType = 1;
     }
     else 
     {
-        g_UploadMessage = "Failed to process map file!";
+        g_UploadMessage = g_SelecteNgonNgu ? "Failed to process map file!" : "Quá trình xử lý Map thất bại!";
         g_UploadMessageType = 2;
         g_MapProcessed = false;
     }
@@ -959,7 +1137,7 @@ void UploadThread(const std::string& mapPath, const std::string& configPath, boo
     // Upload map
     if (uploadMap) 
     {
-        g_UploadMessage = "Uploading map...";
+        g_UploadMessage = g_SelecteNgonNgu ? "Uploading map..." : "Đang tải Map lên...";
         g_UploadMessageType = 3;
 
         auto mapCompleteCallback = [&mapSuccess](bool success, const std::string& message, const json& data) 
@@ -967,7 +1145,7 @@ void UploadThread(const std::string& mapPath, const std::string& configPath, boo
             mapSuccess = success;
             if (!success) 
             {
-                g_UploadMessage = "Map upload failed: " + message;
+                g_UploadMessage = g_SelecteNgonNgu ? ("Map upload failed: " + message) : ("Tải Map lên không thành công: " + message);
                 g_UploadMessageType = 2;
             }
         };
@@ -978,7 +1156,7 @@ void UploadThread(const std::string& mapPath, const std::string& configPath, boo
     // Upload config
     if (uploadConfig && configSuccess && mapSuccess)
     {
-        g_UploadMessage = "Uploading config...";
+        g_UploadMessage = g_SelecteNgonNgu ? "Uploading config..." : "Đang tải cấu hình Map lên...";
         g_UploadMessageType = 3;
         g_UploadProgress = 0.0;
 
@@ -987,7 +1165,7 @@ void UploadThread(const std::string& mapPath, const std::string& configPath, boo
             configSuccess = success;
             if (!success) 
             {
-                g_UploadMessage = "Config upload failed: " + message;
+                g_UploadMessage = g_SelecteNgonNgu ? ("Config upload failed: " + message) : ("Tải cấu hình Map lên không thành công: " + message);
                 g_UploadMessageType = 2;
             }
         };
@@ -1000,16 +1178,16 @@ void UploadThread(const std::string& mapPath, const std::string& configPath, boo
     {
         if (uploadMap && uploadConfig) 
         {
-            g_UploadMessage = "Map and config uploaded successfully!";
+            g_UploadMessage = g_SelecteNgonNgu ? "Map and config uploaded successfully!" : "Map và cấu hình đã được tải lên thành công!";
             DeleteFileA(configPath.c_str());
         }
         else if (uploadMap) 
         {
-            g_UploadMessage = "Map uploaded successfully!";
+            g_UploadMessage = g_SelecteNgonNgu ? "Map uploaded successfully!" : "Map đã được tải lên thành công!";
         }
         else if (uploadConfig) 
         {
-            g_UploadMessage = "Config uploaded successfully!";
+            g_UploadMessage = g_SelecteNgonNgu ? "Config uploaded successfully!" : "Cấu hình Map đã được tải lên thành công!";
 			DeleteFileA(configPath.c_str());
         }
         g_UploadMessageType = 1;
@@ -1023,7 +1201,7 @@ void UploadThread(const std::string& mapPath, const std::string& configPath, boo
 void RenderStatus()
 {
     ImGui::BeginChild("##MessageArea1", ImVec2(0, 45), true);
-    ImGui::Text("Status: ");
+    ImGui::Text(g_SelecteNgonNgu ? "Status: " : "Trạng thái: ");
     if (!g_UploadMessage.empty())
     {
         ImGui::SameLine();
@@ -1044,6 +1222,135 @@ void RenderStatus()
         }
     }
     ImGui::EndChild();
+}
+
+void RenderDownloadPasswordDialog()
+{
+    if (g_ShowPasswordDialog)
+    {
+        ImGui::OpenPopup(g_SelecteNgonNgu ? "Enter Password" : "Nhập mật khẩu");
+        g_ShowPasswordDialog = false;
+        g_ShowPasswordText = false;
+    }
+
+    ImVec2 center = ImGui::GetMainViewport()->GetCenter();
+    ImGui::SetNextWindowPos(center, ImGuiCond_Appearing, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(400, 200));
+
+    bool isOpen = true;
+    if (!ImGui::BeginPopupModal(g_SelecteNgonNgu ? "Enter Password" : "Nhập mật khẩu",&isOpen, ImGuiWindowFlags_NoResize))
+        return;
+
+    ImGui::Text(g_SelecteNgonNgu ? "Map: %s" : "Map: %s", g_PendingDownloadFilename.c_str());
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    ImGui::Text(g_SelecteNgonNgu ? "Password:" : "Mật khẩu:");
+    ImGui::SameLine();
+    ImGui::PushItemWidth(250);
+    if (g_ShowPasswordText)
+    {
+        ImGui::InputText("##DownloadPassword", g_DownloadPasswordBuffer, sizeof(g_DownloadPasswordBuffer));
+    }
+    else
+    {
+        ImGui::InputText("##DownloadPassword", g_DownloadPasswordBuffer, sizeof(g_DownloadPasswordBuffer), ImGuiInputTextFlags_Password);
+    }
+    ImGui::PopItemWidth();
+
+    ImGui::SameLine();
+
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 0.5f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.4f, 0.4f, 0.4f, 0.7f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.2f, 0.2f, 0.2f, 0.8f));
+    if (ImGui::Button(g_ShowPasswordText ? "(o)" : "(-)", ImVec2(40, 0)))
+    {
+        g_ShowPasswordText = !g_ShowPasswordText;
+    }
+
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip(g_ShowPasswordText ? (g_SelecteNgonNgu ? "Hide password" : "Ẩn mật khẩu") : (g_SelecteNgonNgu ? "Show password" : "Hiện mật khẩu"));
+    }
+    ImGui::PopStyleColor(3);
+
+    ImGui::Spacing();
+    ImGui::Separator();
+    ImGui::Spacing();
+
+    float btnW = 100.0f;
+    float startX = (ImGui::GetWindowWidth() - btnW * 2 - 10) * 0.5f;
+    ImGui::SetCursorPosX(startX);
+
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.45f, 0.75f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.55f, 0.85f, 1.00f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.40f, 0.65f, 1.00f));
+    if (ImGui::Button("OK", ImVec2(btnW, 30)))
+    {
+        std::string password = g_DownloadPasswordBuffer;
+
+        if (password.empty())
+        {
+            g_UploadMessage = g_SelecteNgonNgu ? "Please enter password!" : "Vui lòng nhập mật khẩu!";
+            g_UploadMessageType = 2;
+        }
+        else
+        {
+            std::string encodedPassword = AdvB64::encode(password);
+            StartMapDownloadWithPassword(g_PendingDownloadFilename, g_PendingDownloadSize, g_PendingDownloadIndex, encodedPassword);
+            memset(g_DownloadPasswordBuffer, 0, sizeof(g_DownloadPasswordBuffer));
+            ImGui::CloseCurrentPopup();
+        }
+    }
+    ImGui::PopStyleColor(3);
+
+    ImGui::SameLine();
+
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.6f, 0.6f, 0.6f, 1.0f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.4f, 0.4f, 0.4f, 1.0f));
+    if (ImGui::Button(g_SelecteNgonNgu ? "Cancel" : "Huỷ", ImVec2(btnW, 30)))
+    {
+        memset(g_DownloadPasswordBuffer, 0, sizeof(g_DownloadPasswordBuffer));
+        ImGui::CloseCurrentPopup();
+    }
+    ImGui::PopStyleColor(3);
+
+    ImGui::EndPopup();
+}
+
+void RenderInputTextMapPassword()
+{
+    ImGui::Spacing();
+    ImGui::Text(g_SelecteNgonNgu ? "Map Password (optional):" : "Mật khẩu Map (tùy chọn):");
+    ImGui::SameLine();
+    ImGui::PushItemWidth(250);
+
+    if (g_ShowPasswordTextUpload)
+        ImGui::InputText("##MapPassword", g_mappassword, sizeof(g_mappassword));
+    else
+        ImGui::InputText("##MapPassword", g_mappassword, sizeof(g_mappassword), ImGuiInputTextFlags_Password);
+
+    ImGui::PopItemWidth();
+
+    ImGui::SameLine();
+
+    ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.3f, 0.3f, 0.5f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.4f, 0.4f, 0.4f, 0.7f));
+    ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.2f, 0.2f, 0.2f, 0.8f));
+    if (ImGui::Button(g_ShowPasswordTextUpload ? "(o)" : "(-)", ImVec2(40, 0)))
+    {
+        g_ShowPasswordTextUpload = !g_ShowPasswordTextUpload;
+    }
+
+    if (ImGui::IsItemHovered())
+    {
+        ImGui::SetTooltip(g_ShowPasswordTextUpload ? (g_SelecteNgonNgu ? "Hide password" : "Ẩn mật khẩu") : (g_SelecteNgonNgu ? "Show password" : "Hiện mật khẩu"));
+    }
+    ImGui::PopStyleColor(3);
+
+    ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), g_SelecteNgonNgu ? "Leave empty if no password needed" : "Để trống nếu không cần mật khẩu");
+    ImGui::Spacing();
 }
 
 // Render upload popup
@@ -1070,12 +1377,12 @@ void RenderUploadConfigPopup()
         showChoseMapPopup = false;
     }*/
     
-    ImGui::SetNextWindowSize(ImVec2(600, 550));
+    ImGui::SetNextWindowSize(ImVec2(620, 600));
 
     if (ImGui::BeginPopupModal("Upload Map/Config", &showUploadConfigPopup, ImGuiWindowFlags_NoResize))
     {
         ImGui::PushFont(ImGui::GetIO().Fonts->Fonts[0]);
-        ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), "Warcraft III Map Upload Manager");
+        ImGui::TextColored(ImVec4(0.3f, 0.8f, 1.0f, 1.0f), g_SelecteNgonNgu ? "Warcraft III Map Upload Manager" : "Trình Quản Lý Tải Lên Map Warcraft III");
         ImGui::PopFont();
         ImGui::Separator();
         ImGui::Spacing();
@@ -1083,13 +1390,13 @@ void RenderUploadConfigPopup()
         // =========================
         // MAP SELECTION & PROCESSING
         // =========================
-        ImGui::BeginChild("MapSelection", ImVec2(0, 300), true);
+        ImGui::BeginChild("MapSelection", ImVec2(0, 370), true);
         {
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "Map File Selection");
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), g_SelecteNgonNgu ? "Map File Selection" : "Chọn Map");
             ImGui::Spacing();
 
             // File selection
-            ImGui::Text("Selected Map:");
+            ImGui::Text(g_SelecteNgonNgu ? "Selected Map:" : "Map đã chọn:");
             ImGui::SameLine();
             std::string filename;
             std::string dirPath;
@@ -1103,7 +1410,7 @@ void RenderUploadConfigPopup()
             }
             else 
             {
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "None");
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), g_SelecteNgonNgu ? "None" : "Không có");
             }
 
             ImGui::Spacing();
@@ -1113,7 +1420,8 @@ void RenderUploadConfigPopup()
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.4f, 0.6f, 0.8f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.2f, 0.4f, 0.6f, 1.0f));
 
-            if (ImGui::Button("Browse Map File", ImVec2(150, 35))) {
+            if (ImGui::Button(g_SelecteNgonNgu ? "Browse Map File" : "Duyệt Map", ImVec2(150, 35)))
+            {
                 OPENFILENAMEA ofn;
                 char tempPath[512] = "";
 
@@ -1140,7 +1448,7 @@ void RenderUploadConfigPopup()
             ImGui::SameLine();
 
             // War3 version selector
-            ImGui::Text("War3 Version:");
+            ImGui::Text(g_SelecteNgonNgu ? "War3 Version:" : "Phiên bản War3:");
             ImGui::SameLine();
             ImGui::SetNextItemWidth(120);
             const char* versions[] = { "1.24", "1.26", "1.27", "1.28", "1.29", "1.31" };
@@ -1156,7 +1464,7 @@ void RenderUploadConfigPopup()
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.8f, 0.5f, 0.3f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.6f, 0.3f, 0.1f, 1.0f));
 
-            if (ImGui::Button("Process Map", ImVec2(150, 35)))
+            if (ImGui::Button(g_SelecteNgonNgu ? "Process Map" : "Xử lý Map", ImVec2(150, 35)))
             {
                 std::thread(ProcessMapThread, std::string(g_SelectedMapPath), filename, dirPath, g_SelectedWar3Version).detach();
             }
@@ -1171,18 +1479,18 @@ void RenderUploadConfigPopup()
             // Map info display
             if (g_MapProcessed)
             {
-                ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), u8"✓ Map Processed Successfully");
+                ImGui::TextColored(ImVec4(0.5f, 1.0f, 0.5f, 1.0f), g_SelecteNgonNgu ? u8"✓ Map Processed Successfully" : u8"✓ Đã xử lý Map thành công");
                 ImGui::Spacing();
 
                 ImGui::Columns(2, "MapProcessInfo", false);
                 ImGui::SetColumnWidth(0, 200);
 
-                ImGui::Text("Filename:");
+                ImGui::Text(g_SelecteNgonNgu ? "Filename:" : "Tên Map");
                 ImGui::NextColumn();
                 ImGui::Text("%s", g_ProcessedMapConfig.filename.c_str());
                 ImGui::NextColumn();
 
-                ImGui::Text("Size:");
+                ImGui::Text(g_SelecteNgonNgu ? "Size:" : "Kích thước:");
                 ImGui::NextColumn();
                 uint32_t mapSize = 0;
                 if (g_ProcessedMapConfig.mapSize.size() >= 4) 
@@ -1192,7 +1500,7 @@ void RenderUploadConfigPopup()
                 ImGui::Text("%s", FormatBytes(mapSize).c_str());
                 ImGui::NextColumn();
 
-                ImGui::Text("War3 Version:");
+                ImGui::Text(g_SelecteNgonNgu ? "War3 Version:" : "Phiên bản War3:");
                 ImGui::NextColumn();
                 ImGui::Text("1.%d", g_ProcessedMapConfig.map_LANWar3Version);
                 ImGui::NextColumn();
@@ -1201,8 +1509,8 @@ void RenderUploadConfigPopup()
             }
             else
             {
-                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), "No map processed yet.");
-                ImGui::TextWrapped("Select a map file and click 'Process Map' to generate config file.");
+                ImGui::TextColored(ImVec4(0.7f, 0.7f, 0.7f, 1.0f), g_SelecteNgonNgu ? "No map processed yet." : "Chưa có Map nào được xử lý.");
+                ImGui::TextWrapped(g_SelecteNgonNgu ? "Select a map file and click 'Process Map' to generate config file." : "Chọn một Map và nhấp vào 'Xử lý Map' để tạo tệp cấu hình.");
                 ImGui::Spacing();
                 ImGui::Spacing();
                 ImGui::Spacing();
@@ -1214,12 +1522,16 @@ void RenderUploadConfigPopup()
             ImGui::Separator();
             ImGui::Spacing();
 
-            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), "Select what to upload:");
+            ImGui::TextColored(ImVec4(1.0f, 0.8f, 0.3f, 1.0f), g_SelecteNgonNgu ? "Select what to upload:" : "Chọn nội dung để tải lên:");
             ImGui::Spacing();
 
-            ImGui::Checkbox("Upload Map File (.w3x)", &g_UploadMapChecked);
+            ImGui::Checkbox(g_SelecteNgonNgu ? "Upload Map File (.w3x)" : "Tải Map lên (.w3x)", &g_UploadMapChecked);
             ImGui::SameLine();
-            ImGui::Checkbox("Upload Config File (.cfg)", &g_UploadConfigChecked);
+            ImGui::Checkbox(g_SelecteNgonNgu ? "Upload Config File (.cfg)" : "Tải cấu hình Map lên (.cfg)", &g_UploadConfigChecked);
+
+            ImGui::Checkbox(g_SelecteNgonNgu ? "Lock Download Map" : "Khoá tải map về", &g_UploadLockDow);
+
+            RenderInputTextMapPassword();
         }
         ImGui::EndChild();
 
@@ -1246,14 +1558,24 @@ void RenderUploadConfigPopup()
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.3f, 0.8f, 0.4f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.6f, 0.25f, 1.0f));
 
-        if (ImGui::Button(g_UploadInProgress ? "Uploading..." : "Start Upload", ImVec2(buttonWidths, 40)))
+        const char* strupload = g_SelecteNgonNgu ? "Uploading..." : "Đang tải lên";
+        const char* strupload2 = g_SelecteNgonNgu ? "Start Upload" : "Bắt đầu tải lên";
+        if (ImGui::Button(g_UploadInProgress ? strupload : strupload2, ImVec2(buttonWidths, 40)))
         {
+            if (!g_ConfigFilePath.empty())
+            {
+                CConfig_ReplaceKeyValue(g_ConfigFilePath, "map_lockdow", g_UploadLockDow ? "1" : "0");
+
+                if (strlen(g_mappassword) > 0)
+                {
+                    std::string encodedPassword = AdvB64::encode(std::string(g_mappassword));
+                    CConfig_ReplaceKeyValue(g_ConfigFilePath, "map_pass", encodedPassword);
+                    memset(g_mappassword, 0, sizeof(g_mappassword));
+                }
+            }
+
             g_UploadInProgress = true;
-            std::thread(UploadThread,
-                std::string(g_SelectedMapPath),
-                g_ConfigFilePath,
-                g_UploadMapChecked,
-                g_UploadConfigChecked).detach();
+            std::thread(UploadThread, std::string(g_SelectedMapPath), g_ConfigFilePath, g_UploadMapChecked, g_UploadConfigChecked).detach();
         }
 
         ImGui::PopStyleColor(3);
@@ -1264,7 +1586,7 @@ void RenderUploadConfigPopup()
 
     ImGui::SetNextWindowSize(ImVec2(1000, 700));
 
-    if (ImGui::BeginPopupModal("Lựa Chọn Map", &showChoseMapPopup, ImGuiWindowFlags_NoResize))
+    if (ImGui::BeginPopupModal(g_SelecteNgonNgu ? "Select Map" : "Lựa Chọn Map", &showChoseMapPopup, ImGuiWindowFlags_NoResize))
     {
         // =========================
         // SERVER MAPS
@@ -1273,7 +1595,7 @@ void RenderUploadConfigPopup()
         // Search bar
         ImGui::BeginChild("SearchBar", ImVec2(0, 55), true);
         {
-            ImGui::Text("Search:");
+            ImGui::Text(g_SelecteNgonNgu ? "Search:" : "Tìm Kiếm");
             ImGui::SameLine();
             ImGui::SetNextItemWidth(500);
             if (ImGui::InputText("##Search", g_SearchBuffer, sizeof(g_SearchBuffer)))
@@ -1286,7 +1608,7 @@ void RenderUploadConfigPopup()
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.3f, 0.6f, 0.8f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.4f, 0.7f, 0.9f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.2f, 0.5f, 0.7f, 1.0f));
-            if (ImGui::Button(g_MapListLoading ? "Loading..." : "Refresh", ImVec2(100, 25)))
+            if (ImGui::Button(g_MapListLoading ? "Loading..." : (g_SelecteNgonNgu ? "Refresh" : "Làm mới"), ImVec2(100, 25)))
             {
                 LoadMapListAsync();
             }
@@ -1320,6 +1642,9 @@ void RenderUploadConfigPopup()
                 }
                 ImGui::EndTooltip();
             }
+
+            ImGui::SameLine();
+			ImGui::Checkbox(u8"Hiển thị tên Map", &checknamemap);
         }
         ImGui::EndChild();
 
@@ -1352,48 +1677,74 @@ void RenderUploadConfigPopup()
                         ImGui::TableSetupColumn("Actions", ImGuiTableColumnFlags_WidthFixed, 270.0f);
                         ImGui::TableHeadersRow();
 
+                        // Render rows
                         for (size_t i = 0; i < g_FilteredMapList.size(); i++)
                         {
                             const auto& map = g_FilteredMapList[i];
 
                             ImGui::TableNextRow();
+                            bool isRowHovered = false;
 
                             ImGui::TableSetColumnIndex(0);
                             ImGui::Text("%d", i + 1);
+                            isRowHovered |= ImGui::IsItemHovered();
 
                             ImGui::TableSetColumnIndex(1);
                             std::string filename = map.value("filename", "Unknown");
-                            ImGui::Text("%s", filename.c_str());
+                            std::string mapname = map.value("map_name", "Unknown");
+                            RenderWar3ColoredText(checknamemap ? mapname : filename);
+                            isRowHovered |= ImGui::IsItemHovered();
 
                             ImGui::TableSetColumnIndex(2);
                             uint64_t size = map.value("size", 0);
                             ImGui::Text("%s", FormatBytes(size).c_str());
+                            isRowHovered |= ImGui::IsItemHovered();
 
                             ImGui::TableSetColumnIndex(3);
                             std::string uploadTime = map.value("upload_time", "Unknown");
                             ImGui::Text("%s", uploadTime.c_str());
+                            isRowHovered |= ImGui::IsItemHovered();
 
                             ImGui::TableSetColumnIndex(4);
 
                             ImGui::PushID(i);
 
-                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.65f, 0.45f, 1.00f));
-                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.75f, 0.55f, 1.00f));
-                            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.55f, 0.40f, 1.00f));
-                            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
-                            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 4));
-                            if (ImGui::Button("Chọn", ImVec2(80, 20)))
+                            auto ChoseMapAction = [&]()
                             {
                                 strcpy(botAPIMapBuffer, filename.c_str());
                                 CFG.ReplaceKeyValue("BotAPIMap", botAPIMapBuffer);
                                 ImGui::CloseCurrentPopup();
                                 g_UploadMessage = "";
                                 g_UploadMessageType = 0;
+							};
+
+                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.65f, 0.45f, 1.00f));
+                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.75f, 0.55f, 1.00f));
+                            ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.55f, 0.40f, 1.00f));
+                            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+                            ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 4));
+                            if (ImGui::Button(g_SelecteNgonNgu ? "Select" : "Chọn", ImVec2(80, 20)))
+                            {
+                                ChoseMapAction();
                             }
                             ImGui::PopStyleColor(3);
                             ImGui::PopStyleVar(2);
+                            isRowHovered |= ImGui::IsItemHovered();
 
                             ImGui::SameLine();
+
+                            if (isRowHovered)
+                            {
+                                ImGui::TableSetBgColor(ImGuiTableBgTarget_RowBg0, IM_COL32(140, 140, 0, 255));
+                                ImGui::BeginTooltip();
+                                RenderWar3ColoredText(checknamemap ? filename : mapname);
+                                ImGui::EndTooltip();
+
+                                if (ImGui::IsMouseDoubleClicked(ImGuiMouseButton_Left))
+                                {
+                                    ChoseMapAction();
+                                }
+                            }
 
                             // Kiểm tra xem map này có đang download không
                             bool isThisMapDownloading = (g_DownloadInProgress && g_DownloadingMapIndex == static_cast<int>(i));
@@ -1431,40 +1782,88 @@ void RenderUploadConfigPopup()
                             }
                             else
                             {
-                                // Disable button Download nếu đang có map khác download
-                                if (isAnyMapDownloading)
-                                {
-                                    ImGui::BeginDisabled(true);
+                                bool isLocked = map.value("locked", false);
+                                bool hasPassword = map.value("has_password", false);
+                                if (!isLocked)
+                                {                                // Disable button Download nếu đang có map khác download
+                                    if (isAnyMapDownloading)
+                                    {
+                                        ImGui::BeginDisabled(true);
+                                    }
+
+                                    if (hasPassword)
+                                    {
+                                        // Màu đỏ/cam cho password
+                                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.85f, 0.40f, 0.20f, 1.00f));
+                                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.95f, 0.50f, 0.30f, 1.00f));
+                                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.75f, 0.30f, 0.10f, 1.00f));
+                                    }
+                                    else
+                                    {
+                                        // Màu xanh bình thường
+                                        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.45f, 0.75f, 1.00f));
+                                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.55f, 0.85f, 1.00f));
+                                        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.40f, 0.65f, 1.00f));
+                                    }
+
+                                    ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
+                                    ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 4));
+
+                                    // Text rõ ràng hơn
+                                    const char* buttonText;
+                                    if (hasPassword)
+                                    {
+                                        buttonText = g_SelecteNgonNgu ? "Enter Pass" : "Nhập Pass";
+                                    }
+                                    else
+                                    {
+                                        buttonText = g_SelecteNgonNgu ? "Download" : "Tải về";
+                                    }
+
+                                    if (ImGui::Button(buttonText, ImVec2(80, 20)))
+                                    {
+                                        uint64_t mapSize = map.value("size", 0);
+                                        int mapIndex = static_cast<int>(i);
+
+                                        if (hasPassword) 
+                                        {
+                                            // Hiện dialog nhập password
+                                            g_PendingDownloadFilename = filename;
+                                            g_PendingDownloadSize = mapSize;
+                                            g_PendingDownloadIndex = mapIndex;
+                                            g_ShowPasswordDialog = true;
+                                        }
+                                        else 
+                                        {
+                                            // Download trực tiếp không cần password
+                                            StartMapDownloadWithPassword(filename, mapSize, mapIndex, "");
+                                        }
+
+                                        // Gọi wrapper function để download
+                                        //StartMapDownload(filename, mapSize, mapIndex);
+                                    }
+
+                                    // Tooltip khi button bị disable
+                                    if (isAnyMapDownloading && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
+                                    {
+                                        ImGui::SetTooltip("Đang download map khác...\nVui lòng đợi hoàn tất!");
+                                    }
+                                    else if (hasPassword && ImGui::IsItemHovered())
+                                    {
+                                        ImGui::SetTooltip(g_SelecteNgonNgu ? "Password required for download" : "Cần mật khẩu để tải về");
+                                    }
+
+                                    ImGui::PopStyleColor(3);
+                                    ImGui::PopStyleVar(2);
+                                    if (isAnyMapDownloading)
+                                    {
+                                        ImGui::EndDisabled();
+                                    }
+
                                 }
-
-                                // Hiển thị button Download
-                                ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.45f, 0.75f, 1.00f));
-                                ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.25f, 0.55f, 0.85f, 1.00f));
-                                ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f, 0.40f, 0.65f, 1.00f));
-                                ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
-                                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 4));
-
-                                if (ImGui::Button("Download", ImVec2(80, 20)))
+                                else
                                 {
-                                    uint64_t mapSize = map.value("size", 0);
-                                    int mapIndex = static_cast<int>(i);
-
-                                    // Gọi wrapper function để download
-                                    StartMapDownload(filename, mapSize, mapIndex);
-                                }
-
-                                // Tooltip khi button bị disable
-                                if (isAnyMapDownloading && ImGui::IsItemHovered(ImGuiHoveredFlags_AllowWhenDisabled))
-                                {
-                                    ImGui::SetTooltip(u8"Đang download map khác...\nVui lòng đợi hoàn tất!");
-                                }
-
-                                ImGui::PopStyleColor(3);
-                                ImGui::PopStyleVar(2);
-
-                                if (isAnyMapDownloading)
-                                {
-                                    ImGui::EndDisabled();
+                                    ImGui::Dummy(ImVec2(80, 20));
                                 }
                             }
 
@@ -1479,7 +1878,7 @@ void RenderUploadConfigPopup()
                             ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
                             ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(8, 4));
 							ImGui::SameLine();
-                            if (ImGui::Button("Delete", ImVec2(80, 20))) 
+                            if (ImGui::Button(g_SelecteNgonNgu ? "Delete" : "Xoá", ImVec2(80, 20)))
                             {
                                 ImGui::OpenPopup("ConfirmDelete");
                             }
@@ -1490,11 +1889,11 @@ void RenderUploadConfigPopup()
 
                             if (ImGui::BeginPopupModal("ConfirmDelete", NULL, ImGuiWindowFlags_AlwaysAutoResize)) 
                             {
-                                ImGui::Text("Delete map and config?");
+                                ImGui::Text(g_SelecteNgonNgu ? "Delete map and config?" : "Xoá Map và Cấu hình?");
                                 ImGui::Text("%s", filename.c_str());
                                 ImGui::Spacing();
 
-                                if (ImGui::Button("Yes", ImVec2(120, 0))) 
+                                if (ImGui::Button(g_SelecteNgonNgu ? "Yes" : "Có", ImVec2(120, 0)))
                                 {
                                     std::thread([filename]() 
                                     {
@@ -1513,13 +1912,13 @@ void RenderUploadConfigPopup()
 
                                         if (mapDeleted) 
                                         {
-                                            g_UploadMessage = "Map and config deleted!";
+                                            g_UploadMessage = g_SelecteNgonNgu ? "Map and config deleted!" : "Map và cấu hình xoá thành thông!";
                                             g_UploadMessageType = 1;
                                             LoadMapListAsync();
                                         }
                                         else 
                                         {
-                                            g_UploadMessage = "Failed to delete map!";
+                                            g_UploadMessage = g_SelecteNgonNgu ? "Failed to delete map!" : "Lỗi Xoá Map và cấu hình!";
                                             g_UploadMessageType = 2;
                                         }
                                     }).detach();
@@ -1527,7 +1926,7 @@ void RenderUploadConfigPopup()
                                 }
 
                                 ImGui::SameLine();
-                                if (ImGui::Button("Cancel", ImVec2(120, 0))) 
+                                if (ImGui::Button(g_SelecteNgonNgu ? "Cancel" : "Hủy", ImVec2(120, 0)))
                                 {
                                     CloseUploadPopup();
                                 }
@@ -1567,7 +1966,7 @@ void RenderUploadConfigPopup()
 
             std::string fullPath = g_War3MapsPath + "\\" + currentFile;
 
-            ImGui::Text("Downloading: %s", fullPath.c_str());
+            ImGui::Text(g_SelecteNgonNgu ? "Downloading: %s" : "Đang tải xuống: %s", fullPath.c_str());
 
             // Progress bar lớn hơn
             ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ImVec4(0.3f, 0.7f, 0.3f, 1.0f));
@@ -1585,11 +1984,11 @@ void RenderUploadConfigPopup()
             ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.7f, 0.2f, 0.2f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.85f, 0.3f, 0.3f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.6f, 0.15f, 0.15f, 1.0f));
-            if (ImGui::Button("Cancel", ImVec2(0, 25)))
+            if (ImGui::Button(g_SelecteNgonNgu ? "Cancel" : "Hủy", ImVec2(0, 25)))
             {
                 g_DownloadCancelled = true;
                 g_DownloadInProgress = false;
-                g_UploadMessage = "Download cancelled!";
+                g_UploadMessage = g_SelecteNgonNgu ? "Download cancelled!" : "Đã huỷ tải xuống!";
                 g_UploadMessageType = 3;
             }
             ImGui::PopStyleColor(3);
@@ -1606,7 +2005,7 @@ void RenderUploadConfigPopup()
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.7f, 0.4f, 0.4f, 1.0f));
         ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.5f, 0.2f, 0.2f, 1.0f));
 
-        if (ImGui::Button("Close", ImVec2(buttonWidth, 35))) 
+        if (ImGui::Button(g_SelecteNgonNgu ? "Cancel" : "Đóng", ImVec2(buttonWidth, 35)))
         {
             g_DownloadCancelled = true;
             g_DownloadInProgress = false;
@@ -1616,6 +2015,7 @@ void RenderUploadConfigPopup()
         ImGui::PopStyleColor(3);
 
         RenderWar3PathPopup();
+        RenderDownloadPasswordDialog();
 
         ImGui::EndPopup();
     }
@@ -1671,8 +2071,8 @@ std::string GetRunningWar3Path()
                 HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pe32.th32ProcessID);
                 if (hProcess)
                 {
-                    char processPath[MAX_PATH];
-                    DWORD size = MAX_PATH;
+                    char processPath[4096]{};
+                    DWORD size = 4096;
 
                     // Windows Vista+ sử dụng QueryFullProcessImageName
                     if (QueryFullProcessImageNameA(hProcess, 0, processPath, &size))
@@ -1735,7 +2135,7 @@ std::string BrowseForWar3Folder()
     LPITEMIDLIST pidl = SHBrowseForFolderA(&bi);
     if (pidl != NULL)
     {
-        char path[MAX_PATH];
+        char path[4096]{};
         if (SHGetPathFromIDListA(pidl, path))
         {
             CoTaskMemFree(pidl);
@@ -1820,7 +2220,7 @@ std::string AutoDetectWar3Path()
         "SOFTWARE\\Blizzard Entertainment\\Warcraft III",
         0, KEY_READ, &hKey) == ERROR_SUCCESS)
     {
-        char buffer[MAX_PATH];
+        char buffer[4096]{};
         DWORD bufferSize = sizeof(buffer);
         if (RegQueryValueExA(hKey, "InstallPath", NULL, NULL, (LPBYTE)buffer, &bufferSize) == ERROR_SUCCESS)
         {
@@ -1915,7 +2315,7 @@ void RenderWar3PathPopup()
         // Hiển thị path hiện tại
         ImGui::Text(u8"Đường dẫn hiện tại:");
         ImGui::PushStyleColor(ImGuiCol_FrameBg, ImVec4(0.2f, 0.2f, 0.2f, 1.0f));
-        ImGui::InputText("##War3Path", g_War3PathBuffer, MAX_PATH, ImGuiInputTextFlags_ReadOnly);
+        ImGui::InputText("##War3Path", g_War3PathBuffer, 4096, ImGuiInputTextFlags_ReadOnly);
         ImGui::PopStyleColor();
 
         ImGui::Spacing();
@@ -2035,6 +2435,7 @@ bool StartMapDownload(const std::string& filename, uint64_t mapSize, int mapInde
         bool ok = g_MapAPI->DownloadMap(
             filename,
             outputPath,
+            "",
             [](double percent, uint64_t current, uint64_t total)
             {
                 g_DownloadProgress = percent;
@@ -2047,17 +2448,17 @@ bool StartMapDownload(const std::string& filename, uint64_t mapSize, int mapInde
         if (g_DownloadCancelled)
         {
             remove(outputPath.c_str());
-            g_UploadMessage = "Download cancelled!";
+            g_UploadMessage = g_SelecteNgonNgu ? "Download cancelled!" : "Đã huỷ tải xuống!";
             g_UploadMessageType = 3;
         }
         else if (ok)
         {
-            g_UploadMessage = "Download Map OK! Saved to: " + outputPath;
+            g_UploadMessage = g_SelecteNgonNgu ? ("Download Map OK! Saved to: " + outputPath) : ("Tải Map thành công! Đã lưu vào: " + outputPath);
             g_UploadMessageType = 1;
         }
         else
         {
-            g_UploadMessage = "Failed to download map!";
+            g_UploadMessage = g_SelecteNgonNgu ? "Failed to download map!" : "Lỗi tải Map!";
             g_UploadMessageType = 2;
         }
 
@@ -2068,6 +2469,73 @@ bool StartMapDownload(const std::string& filename, uint64_t mapSize, int mapInde
     }).detach();
 
     return true;
+}
+
+void StartMapDownloadWithPassword(const std::string& filename, uint64_t mapSize, int mapIndex, const std::string& password)
+{
+    std::string downloadPath;
+    bool needShowPopup = false;
+
+    if (!SetupDownloadPath(downloadPath, needShowPopup))
+    {
+        if (needShowPopup)
+            g_ShowWar3PathPopup = true;
+        return;
+    }
+
+    // Download trong thread
+    std::thread([filename, downloadPath, mapSize, mapIndex, password]()
+    {
+        InitMapAPI();
+
+        g_DownloadInProgress = true;
+        g_DownloadCancelled = false;
+        g_DownloadProgress = 0.0;
+        g_DownloadCurrent = 0;
+        g_DownloadTotal = mapSize;
+        g_DownloadingMapIndex = mapIndex;
+        {
+            std::lock_guard<std::mutex> lock(g_DownloadMutex);
+            g_DownloadingFilename = filename;
+        }
+
+        std::string outputPath = downloadPath + filename;
+
+        // Download với password
+        bool ok = g_MapAPI->DownloadMap(
+            filename,
+            outputPath,
+            password,  // TRUYỀN PASSWORD VÀO
+            [](double percent, uint64_t current, uint64_t total)
+            {
+                g_DownloadProgress = percent;
+                g_DownloadCurrent = current;
+                g_DownloadTotal = total;
+            }
+        );
+
+        if (g_DownloadCancelled)
+        {
+            remove(outputPath.c_str());
+            g_UploadMessage = g_SelecteNgonNgu ? "Download cancelled!" : "Đã huỷ tải xuống!";
+            g_UploadMessageType = 3;
+        }
+        else if (ok)
+        {
+            g_UploadMessage = g_SelecteNgonNgu ? "Download OK!" : "Tải thành công!";
+            g_UploadMessageType = 1;
+        }
+        else
+        {
+            // Có thể là sai password hoặc lỗi khác
+            g_UploadMessage = g_SelecteNgonNgu ? "Download failed! Check password." : "Tải thất bại! Kiểm tra mật khẩu.";
+            g_UploadMessageType = 2;
+        }
+
+        g_DownloadInProgress = false;
+        g_DownloadingMapIndex = -1;
+        g_DownloadCancelled = false;
+    }).detach();
 }
 
 void InitializeWar3Path()

@@ -21,7 +21,7 @@
 
 void WriteLog(const char* fmt, ...);
 wstring Utf8ToWide(const string& str);
-std::string ETS_HASH(const std::string& input);
+std::string ETS_HASH(std::string input);
 
 // byte arrays
 

@@ -2,6 +2,7 @@
 #define GPROXY_IMGUI_H
 
 #include "Include.h"
+#include <imgui.h>
 
 // Forward declarations
 class CGProxy;
@@ -20,6 +21,8 @@ extern int g_PopupMessageType;
 extern char serverBuffer[256];
 extern char botMapBuffer[256];
 extern char botAPIMapBuffer[256];
+extern ImFont* g_UnicodeFont;
+extern int g_SelecteNgonNgu;
 
 // PVPGN Game
 struct PvPGNGameInfo 

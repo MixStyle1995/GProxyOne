@@ -23,6 +23,8 @@
 
 #include "config.h"
 
+#define GPROXY_VERSION "3.5.3"
+
 template<typename T>
 void removeSubstrs(basic_string<T>& s, const basic_string<T>& p, const basic_string<T>& r)
 {
@@ -98,6 +100,8 @@ class CCommandPacket;
 class CGProxy
 {
 public:
+	bool m_AutoJoin;
+	string m_AutoJoinGameName;
 	string m_Version;
 	CTCPServer *m_LocalServer;
 	CTCPSocket *m_LocalSocket;
@@ -163,6 +167,8 @@ public:
 	CGProxy( string nHosts, string nUDPBindIP, uint16_t nUDPPort, uint16_t nGUIPort, bool nUDPConsole, bool nPublicGames, bool nFilterGProxy, string nUDPPassword, string nUDPTrigger, bool nTFT, string nWar3Path, string nCDKeyROC, string nCDKeyTFT, string nServer, string nUsername, string nPassword, string nChannel, uint32_t nWar3Version, uint16_t nPort, BYTEARRAY nEXEVersion, BYTEARRAY nEXEVersionHash, string nPasswordHashType );
 	~CGProxy( );
 
+	void SendFakeReqJoin(CIncomingGameHost* game);
+
 	// processing functions
 
 	bool Update( long usecBlock );
@@ -187,7 +193,6 @@ public:
 	void UDPCommands( string Message );
 };
 
-extern uint32_t War3Version;
 extern CConfig CFG;
 extern CGProxy* gGProxy;
 extern bool gRestart;
@@ -198,5 +203,8 @@ extern string gInputBuffer;
 extern std::thread* g_ImGuiThread;
 extern CGProxy* gGProxy;
 string GGetUserName();
-
+void StopInjectThread();
+void StartInjectThread();
+std::string LoadFileFromMPQ(const char* fileName);
+bool LoadFileFromMPQ(const char* fileName, unsigned char** data, DWORD* size);
 #endif

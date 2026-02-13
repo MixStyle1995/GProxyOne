@@ -30,6 +30,8 @@
 #include <fcntl.h>
 #include <io.h>
 
+#include "Obuscate.hpp"
+
 std::mutex g_LogMutex;
 
 void WriteLog(const char* fmt, ...)
@@ -57,10 +59,9 @@ void WriteLog(const char* fmt, ...)
 	file << "[" << timebuf << "] " << msg << "\n";
 }
 
-std::string ETS_HASH(const std::string& input)
+std::string ETS_HASH(std::string input)
 {
-	//Ham nay khong public
-	return "";
+	return std::string();
 }
 
 BYTEARRAY UTIL_CreateByteArray( unsigned char *a, int size )

@@ -226,7 +226,7 @@ bool CBNET :: Update( void *fd, void *send_fd )
 		{
 			// request 20 games (note: it seems like 20 is the maximum, requesting more doesn't result in more results returned)
 
-			QueueGetGameList( 20 );
+			QueueGetGameList( 100 );
 			m_LastGetPublicListTime = GetTime( );
 		}
 
@@ -574,21 +574,6 @@ void CBNET :: ProcessPackets( )
 							CONSOLE_Print( "[BNET] attempting to auth as Warcraft III: Reign of Chaos" );							
 
 						m_Socket->PutBytes( m_Protocol->SEND_SID_AUTH_CHECK( m_GProxy->m_TFT, m_Protocol->GetClientToken( ), m_BNCSUtil->GetEXEVersion( ), m_BNCSUtil->GetEXEVersionHash( ), m_BNCSUtil->GetKeyInfoROC( ), m_BNCSUtil->GetKeyInfoTFT( ), m_BNCSUtil->GetEXEInfo( ), "GProxy" ) );
-
-						// the Warden seed is the first 4 bytes of the ROC key hash
-						// initialize the Warden handler
-
-						/*
-
-						if( !m_BNLSServer.empty( ) )
-						{
-							CONSOLE_Print( "[BNET] creating BNLS client" );
-							delete m_BNLSClient;
-							m_BNLSClient = new CBNLSClient( m_BNLSServer, m_BNLSPort, m_BNLSWardenCookie );
-							m_BNLSClient->QueueWardenSeed( UTIL_ByteArrayToUInt32( m_BNCSUtil->GetKeyInfoROC( ), false, 16 ) );
-						}
-
-						*/
 					}
 					else
 					{

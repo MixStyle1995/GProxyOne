@@ -22,7 +22,7 @@ public:
     bool UploadConfig(const std::string& username, const std::string& filepath, ProgressCallback onProgress = nullptr, CompletionCallback onComplete = nullptr);
 
     // Download map từ server
-    bool DownloadMap(const std::string& filename, const std::string& savePath, ProgressCallback onProgress = nullptr);
+    bool DownloadMap(const std::string& filename, const std::string& savePath, const std::string& password = "", ProgressCallback onProgress = nullptr);
 
     // Download config từ server
     bool DownloadConfig(const std::string& filename, const std::string& savePath, ProgressCallback onProgress = nullptr);

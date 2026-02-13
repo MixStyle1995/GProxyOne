@@ -142,6 +142,7 @@ void CConfig :: Set( string key, string x )
 
 void CConfig::ReplaceKeyValue(const std::string& key, const std::string& value)
 {
+	Set(key, value);
 	std::ifstream in(strFile);
 	std::string out, line;
 	bool found = false;

@@ -48,8 +48,8 @@ public:
 		SID_PING					= 37,	// 0x25
 		SID_LOGONRESPONSE			= 41,	// 0x29
 		SID_NETGAMEPORT				= 69,	// 0x45
-		SID_AUTH_INFO				= 80,	// 0x50
-		SID_AUTH_CHECK				= 81,	// 0x51
+		SID_AUTH_INFO				= 0x50,	// 0x50
+		SID_AUTH_CHECK				= 0x51,	// 0x51
 		SID_AUTH_ACCOUNTLOGON		= 83,	// 0x53
 		SID_AUTH_ACCOUNTLOGONPROOF	= 84,	// 0x54
 		SID_WARDEN					= 94,	// 0x5E
@@ -59,8 +59,10 @@ public:
 		SID_CLANMEMBERLIST			= 125,	// 0x7D
 		SID_CLANMEMBERSTATUSCHANGE	= 127,	// 0x7F
 		//New Packet By Thai Son
-		SID_REQUEST_GAME_LIST		= 0xF2,
-		SID_GAME_HOST_INFO			= 0xF0
+		SID_GAME_HOST_INFO			= 0xF0,	//S -> C
+		SID_CUSTOM_WAR3_VERSION		= 0xF1,	//C -> S
+		SID_REQUEST_GAME_LIST		= 0xF2,	//C -> S
+
 	};
 
 	enum KeyResult {
@@ -141,6 +143,7 @@ public:
 
 	// send functions
 
+	BYTEARRAY SEND_SID_CUSTOM_WAR3_VERSION(unsigned char war3Version, BYTEARRAY exeVersion, BYTEARRAY exeVersionHash);
 	BYTEARRAY SEND_PROTOCOL_INITIALIZE_SELECTOR( );
 	BYTEARRAY SEND_SID_NULL( );
 	BYTEARRAY SEND_SID_STOPADV( );

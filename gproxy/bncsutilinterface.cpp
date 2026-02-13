@@ -48,45 +48,43 @@ void CBNCSUtilInterface :: Reset( string userName, string userPassword )
 	m_NLS = new NLS( userName, userPassword );
 }
 
-bool CBNCSUtilInterface::HELP_SID_AUTH_CHECK(bool TFT, string war3Path, string keyROC, string keyTFT, string valueStringFormula, string mpqFileName, BYTEARRAY clientToken, BYTEARRAY serverToken)
+void CBNCSUtilInterface::SetHashVersion()
 {
 	uint32_t EXEVersion = 18481153;
 	uint32_t EXEVersionHash = 4075278018;
 
-	m_EXEInfo = "thaison_war3";
-
-	if (War3Version == 24)
+	if (gGProxy->m_War3Version == 24)
 	{
 		EXEVersion = 18351347;
 		EXEVersionHash = 3729015749;
 	}
-	else if (War3Version == 26)
+	else if (gGProxy->m_War3Version == 26)
 	{
 		EXEVersion = 18481153;
 		EXEVersionHash = 4075278018;
 	}
-	else if (War3Version == 27)
+	else if (gGProxy->m_War3Version == 27)
 	{
 		EXEVersion = 18546704;
 		EXEVersionHash = 744747730;
 	}
-	else if (War3Version == 28)
+	else if (gGProxy->m_War3Version == 28)
 	{
 		EXEVersion = 18613504;
 		EXEVersionHash = 1618231241;
 	}
-	else if (War3Version == 29)
+	else if (gGProxy->m_War3Version == 29)
 	{
 		EXEVersion = 18678287;
 		EXEVersionHash = 2637185030;
 	}
-	else if (War3Version == 311)//12164
+	else if (gGProxy->m_War3Version == 311)//12164
 	{
 		EXEVersion = 18809220;
 		EXEVersionHash = 2048076279;	//x86
 		//EXEVersionHash = 1061707167;	//x86 - x64
 	}
-	else if (War3Version == 31)//12173
+	else if (gGProxy->m_War3Version == 31)//12173
 	{
 		EXEVersion = 18809229;
 		EXEVersionHash = 2175601372;	//x86
@@ -95,6 +93,13 @@ bool CBNCSUtilInterface::HELP_SID_AUTH_CHECK(bool TFT, string war3Path, string k
 
 	m_EXEVersion = UTIL_CreateByteArray(EXEVersion, false);
 	m_EXEVersionHash = UTIL_CreateByteArray(EXEVersionHash, false);
+}
+
+bool CBNCSUtilInterface::HELP_SID_AUTH_CHECK(bool TFT, string war3Path, string keyROC, string keyTFT, string valueStringFormula, string mpqFileName, BYTEARRAY clientToken, BYTEARRAY serverToken)
+{
+	m_EXEInfo = "thaison_war3";
+
+	SetHashVersion();
 
 	m_KeyInfoROC = CreateKeyInfo(keyROC, UTIL_ByteArrayToUInt32(clientToken, false), UTIL_ByteArrayToUInt32(serverToken, false));
 

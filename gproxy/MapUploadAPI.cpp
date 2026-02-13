@@ -5,12 +5,10 @@
 #include "util.h"
 #include "Obuscate.hpp"
 #include "gproxy_map.h"
-
-string serverurlapi = "http://160.187.146.137/War3API/war3_upload_api.php";
-string keycheckadmin = "QGo4NGMl2!wK31cl5V6Y1loOOGY@5Hst";
+#include "srv_Url.h"
 
 MapUploadAPI::MapUploadAPI()
-    : m_serverUrl(serverurlapi)
+    : m_serverUrl(ServerConfig::API_URL)
     , m_timeout(300) // 5 minutes default
     , m_verbose(false)
 {
@@ -93,7 +91,7 @@ bool MapUploadAPI::PerformUpload(const std::string& username, const std::string&
     std::string response;
 
     XAM_LOL(100);
-    std::string hash = ETS_HASH(username + "|" + AdvB64::decode(keycheckadmin));
+    std::string hash = ETS_HASH(username);
 
     // Check if file exists
     std::ifstream file(filepath, std::ios::binary);
@@ -204,7 +202,7 @@ bool MapUploadAPI::PerformUpload(const std::string& username, const std::string&
 }
 
 // Download map
-bool MapUploadAPI::DownloadMap(const std::string& filename, const std::string& savePath, ProgressCallback onProgress)
+bool MapUploadAPI::DownloadMap(const std::string& filename, const std::string& savePath, const std::string& password, ProgressCallback onProgress)
 {
     CURL* curl = curl_easy_init();
     if (!curl)
@@ -219,6 +217,10 @@ bool MapUploadAPI::DownloadMap(const std::string& filename, const std::string& s
     }
 
     std::string url = m_serverUrl + "?action=download_map&file=" + curl_easy_escape(curl, filename.c_str(), 0);
+    if (!password.empty())
+    {
+        url += "&password=" + password;
+    }
 
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, NULL);
@@ -494,7 +496,7 @@ bool MapUploadAPI::PerformDeleteRequest(const std::string& username, const std::
     std::string postData = "filename=" + filename;
 
     XAM_LOL(789);
-    std::string hash = ETS_HASH(username + "|" + AdvB64::decode(keycheckadmin));
+    std::string hash = ETS_HASH(username);
 
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_POST, 1L);

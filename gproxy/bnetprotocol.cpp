@@ -584,13 +584,14 @@ BYTEARRAY CBNETProtocol :: SEND_SID_GETADVLISTEX( string gameName, uint32_t numG
 	if( gameName.empty( ) )
 	{
 		Condition1[0] = 0;		Condition1[1] = 224;
-		Condition2[0] = 127;	Condition2[1] = 0;
+		Condition2[0] = 255;	Condition2[1] = 255;
 	}
 	else
 	{
 		Condition1[0] = 255;	Condition1[1] = 3;
 		Condition2[0] = 0;		Condition2[1] = 0;
-		Condition3[0] = 255;	Condition3[1] = 3;		Condition3[2] = 0;		Condition3[3] = 0;
+		Condition3[0] = 255;	Condition3[1] = 3;		
+		Condition3[2] = 0;		Condition3[3] = 0;
 		numGames = 1;
 	}
 
@@ -1036,6 +1037,32 @@ BYTEARRAY CBNETProtocol::SEND_SID_REQUEST_GAME_LIST()
 	packet.push_back(0);
 	packet.push_back(0);
 	AssignLength(packet);
+	return packet;
+}
+
+BYTEARRAY CBNETProtocol::SEND_SID_CUSTOM_WAR3_VERSION(unsigned char war3Version, BYTEARRAY exeVersion, BYTEARRAY exeVersionHash)
+{
+	BYTEARRAY packet;
+
+	if (exeVersion.size() == 4 && exeVersionHash.size() == 4)
+	{
+		// Header
+		packet.push_back(BNET_HEADER_CONSTANT);      // 0xFF
+		packet.push_back(SID_CUSTOM_WAR3_VERSION);   // 0xF1
+		packet.push_back(0);                         // Length (will be set later)
+		packet.push_back(0);
+
+		unsigned char Version[] = { war3Version, 0, 0, 0 };
+		UTIL_AppendByteArray(packet, Version, 4);			// Version
+
+		UTIL_AppendByteArrayFast(packet, exeVersion);		// EXE Version
+		UTIL_AppendByteArrayFast(packet, exeVersionHash);	// EXE Version Hash
+
+		AssignLength(packet);
+	}
+	else
+		CONSOLE_Print("[BNETPROTO] invalid parameters passed to SEND_SID_CUSTOM_WAR3_VERSION");
+
 	return packet;
 }
 

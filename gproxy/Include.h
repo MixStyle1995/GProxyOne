@@ -1,4 +1,5 @@
 #pragma once
+#pragma comment(linker, "/SUBSYSTEM:WINDOWS /ENTRY:mainCRTStartup")
 
 #ifdef WIN32
 #include <stdint.h>
@@ -8,8 +9,16 @@
 #include <curl.h>
 
 #pragma comment(lib, "libcurl.lib")
-//#pragma comment(lib, "libssl.lib")
-//#pragma comment(lib, "libcrypto.lib")
+#pragma comment(lib, "libssl.lib")
+#pragma comment(lib, "libcrypto.lib")
+
+#pragma comment(lib, "zlib.lib")
+#pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "crypt32.lib")
+#pragma comment(lib, "advapi32.lib")
+#pragma comment(lib, "user32.lib")
+#pragma comment(lib, "iphlpapi.lib")
+#pragma comment(lib, "secur32.lib")
 
 #define __STORMLIB_SELF__
 #include <StormLib.h>
@@ -17,15 +26,6 @@
 
 #include "json.hpp"
 using json = nlohmann::json;
-
-#pragma comment(lib, "ws2_32.lib")
-#pragma comment(lib, "wldap32.lib")
-#pragma comment(lib, "crypt32.lib")
-#pragma comment(lib, "Iphlpapi.lib")
-#pragma comment(lib, "Secur32.lib")
-#pragma comment(lib, "Advapi32.lib")
-#pragma comment(lib, "ole32.lib")
-#pragma comment(lib, "shell32.lib")
 
 #include <fstream>
 #include <iostream>
@@ -45,6 +45,58 @@ using json = nlohmann::json;
 #include <tlhelp32.h>
 #include <shlobj.h>
 #include <commdlg.h>
+#include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <iosfwd>
+#include <list>
+#include <math.h>
+#include <process.h>
+#include <psapi.h>
+#include <shlwapi.h>
+#include <time.h>
+#include <winbase.h>
+#include <windef.h>
+#include <winnt.h>
+#include <winuser.h>
+#include <direct.h>	
+#include <errno.h>
+#include <io.h>
+#include <tchar.h>
+#include <unordered_map>
+#include <random>
+#include <iterator>
+#include <regex>
+#include <deque>
+#include <mbstring.h>
+#include <malloc.h>
+#include <wchar.h>
+#include <conio.h>
+#include <cctype>
+#include <memory>
+#include <cstdarg>
+#include <type_traits>
+#include <chrono>
+#include <thread>
+#include <future>
+#include <shellapi.h>
+#include <array>
+#include <codecvt>
+#include <bitset>
+#include <utility>
+#include <atlenc.h>
+#include <DbgHelp.h>
+#include <unordered_set>
+#include <intrin.h>
+
+#pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "wldap32.lib")
+#pragma comment(lib, "crypt32.lib")
+#pragma comment(lib, "Iphlpapi.lib")
+#pragma comment(lib, "Secur32.lib")
+#pragma comment(lib, "Advapi32.lib")
+#pragma comment(lib, "ole32.lib")
+#pragma comment(lib, "shell32.lib")
 
 using namespace std;
 

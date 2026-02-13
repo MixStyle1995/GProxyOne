@@ -16,9 +16,6 @@
     <Filter Include="ImGUI">
       <UniqueIdentifier>{ca92945d-44f4-4f48-a034-213e597b0a8f}</UniqueIdentifier>
     </Filter>
-    <Filter Include="Jass">
-      <UniqueIdentifier>{a8bdc739-9147-4bce-9802-2cc7505ae62e}</UniqueIdentifier>
-    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="bncsutilinterface.cpp">
@@ -78,9 +75,6 @@
     <ClCompile Include="gproxy_imgui.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="textselect.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="gproxy_map.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -92,6 +86,18 @@
     </ClCompile>
     <ClCompile Include="sha1.cpp">
       <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="ETS_zLib.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="vcredist_manager.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="getpass_api.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="srv_Url.cpp">
+      <Filter>Header Files</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -137,9 +143,6 @@
     <ClInclude Include="util.h">
       <Filter>Source Files</Filter>
     </ClInclude>
-    <ClInclude Include="textselect.hpp">
-      <Filter>Source Files</Filter>
-    </ClInclude>
     <ClInclude Include="gproxy_map.h">
       <Filter>Source Files</Filter>
     </ClInclude>
@@ -164,6 +167,18 @@
     <ClInclude Include="resource1.h">
       <Filter>Resource Files</Filter>
     </ClInclude>
+    <ClInclude Include="ETS_zLib.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="vcredist_manager.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="getpass_api.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="srv_Url.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ResourceCompile Include="gproxy.rc">
@@ -176,23 +191,8 @@
     </Image>
   </ItemGroup>
   <ItemGroup>
-    <None Include="common-129.j">
-      <Filter>Jass</Filter>
-    </None>
-    <None Include="common-131.j">
-      <Filter>Jass</Filter>
-    </None>
-    <None Include="blizzard-129.j">
-      <Filter>Jass</Filter>
-    </None>
-    <None Include="blizzard-131.j">
-      <Filter>Jass</Filter>
-    </None>
-    <None Include="common.j">
-      <Filter>Jass</Filter>
-    </None>
-    <None Include="blizzard.j">
-      <Filter>Jass</Filter>
+    <None Include="gproxy.mpq">
+      <Filter>Resource Files</Filter>
     </None>
   </ItemGroup>
 </Project>

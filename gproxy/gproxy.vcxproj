@@ -75,30 +75,36 @@
     <ClCompile>
       <Optimization>MaxSpeed</Optimization>
       <IntrinsicFunctions>true</IntrinsicFunctions>
-      <AdditionalIncludeDirectories>..\bncsutil\src;..\pdcurses;..\Bonjour\Include;..\imgui;..\asio;..\Storm;..\cUrl;..\openssl;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
-      <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;_CRT_SECURE_NO_WARNINGS;_WINSOCK_DEPRECATED_NO_WARNINGS;PDC_WIDE;CHTYPE_32;PDC_FORCE_UTF8;PDC_RGB;%(PreprocessorDefinitions)</PreprocessorDefinitions>
+      <AdditionalIncludeDirectories>..\bncsutil\src;..\pdcurses;..\Bonjour\Include;..\imgui;..\asio;..\Storm;..\cUrl;..\openssl;..\zLib;..\gdown;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;_CRT_SECURE_NO_WARNINGS;_WINSOCK_DEPRECATED_NO_WARNINGS;CHTYPE_32;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <PrecompiledHeader />
       <WarningLevel>Level3</WarningLevel>
       <DebugInformationFormat>ProgramDatabase</DebugInformationFormat>
-      <MultiProcessorCompilation>true</MultiProcessorCompilation>
+      <MultiProcessorCompilation>
+      </MultiProcessorCompilation>
       <WholeProgramOptimization>false</WholeProgramOptimization>
       <AdditionalOptions>/utf-8 %(AdditionalOptions)</AdditionalOptions>
       <FavorSizeOrSpeed>Speed</FavorSizeOrSpeed>
       <LanguageStandard>stdcpp17</LanguageStandard>
+      <InlineFunctionExpansion>Default</InlineFunctionExpansion>
+      <StringPooling>true</StringPooling>
     </ClCompile>
     <Link>
       <AdditionalDependencies>ws2_32.lib;winmm.lib;pdcurses.lib;BNCSUtil.lib;dnssd.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>..\pdcurses;..\bncsutil\vc8_build\Release;..\Bonjour\Lib;..\Storm;..\cUrl;..\openssl;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalLibraryDirectories>..\pdcurses;..\bncsutil\vc8_build\Release;..\Bonjour\Lib;..\Storm;..\cUrl;..\openssl;..\zLib;..\gdown;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
       <GenerateDebugInformation>false</GenerateDebugInformation>
       <SubSystem>Windows</SubSystem>
       <OptimizeReferences>true</OptimizeReferences>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <DataExecutionPrevention>true</DataExecutionPrevention>
       <TargetMachine>MachineX86</TargetMachine>
-      <LinkTimeCodeGeneration />
+      <LinkTimeCodeGeneration>
+      </LinkTimeCodeGeneration>
       <RandomizedBaseAddress>false</RandomizedBaseAddress>
+      <MergeSections>
+      </MergeSections>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
@@ -117,6 +123,7 @@
     <ClCompile Include="config.cpp" />
     <ClCompile Include="crc32.cpp" />
     <ClCompile Include="gameprotocol.cpp" />
+    <ClCompile Include="getpass_api.cpp" />
     <ClCompile Include="gproxy.cpp" />
     <ClCompile Include="gproxy_imgui.cpp" />
     <ClCompile Include="gproxy_map.cpp" />
@@ -124,8 +131,10 @@
     <ClCompile Include="MapUploadAPI.cpp" />
     <ClCompile Include="sha1.cpp" />
     <ClCompile Include="socket.cpp" />
-    <ClCompile Include="textselect.cpp" />
+    <ClCompile Include="srv_Url.cpp" />
     <ClCompile Include="util.cpp" />
+    <ClCompile Include="ETS_zLib.cpp" />
+    <ClCompile Include="vcredist_manager.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="bncsutilinterface.h" />
@@ -136,6 +145,7 @@
     <ClInclude Include="config.h" />
     <ClInclude Include="crc32.h" />
     <ClInclude Include="gameprotocol.h" />
+    <ClInclude Include="getpass_api.h" />
     <ClInclude Include="gproxy.h" />
     <ClInclude Include="gproxy_imgui.h" />
     <ClInclude Include="gproxy_map.h" />
@@ -147,10 +157,12 @@
     <ClInclude Include="resource1.h" />
     <ClInclude Include="sha1.h" />
     <ClInclude Include="socket.h" />
+    <ClInclude Include="srv_Url.h" />
     <ClInclude Include="stb_image.h" />
-    <ClInclude Include="textselect.hpp" />
     <ClInclude Include="util.h" />
     <ClInclude Include="util_imgui.h" />
+    <ClInclude Include="ETS_zLib.h" />
+    <ClInclude Include="vcredist_manager.h" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\bncsutil\vc8_build\BNCSutil.vcxproj">
@@ -165,12 +177,7 @@
     <Image Include="icon.ico" />
   </ItemGroup>
   <ItemGroup>
-    <None Include="blizzard-129.j" />
-    <None Include="blizzard-131.j" />
-    <None Include="blizzard.j" />
-    <None Include="common-129.j" />
-    <None Include="common-131.j" />
-    <None Include="common.j" />
+    <None Include="gproxy.mpq" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

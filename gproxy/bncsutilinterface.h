@@ -40,6 +40,8 @@ public:
 	CBNCSUtilInterface( string userName, string userPassword );
 	~CBNCSUtilInterface( );
 
+	void SetHashVersion();
+
 	BYTEARRAY GetEXEVersion( )								{ return m_EXEVersion; }
 	BYTEARRAY GetEXEVersionHash( )							{ return m_EXEVersionHash; }
 	string GetEXEInfo( )									{ return m_EXEInfo; }
